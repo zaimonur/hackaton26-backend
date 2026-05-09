@@ -1,0 +1,21 @@
+# Binaries
+/backend/api
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Environment Variables (Kritik!)
+.env
+
+# Database Volume (Docker kalıntıları)
+/pgdata/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

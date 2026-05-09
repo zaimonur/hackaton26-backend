@@ -1,0 +1,98 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"time"
+
+	handler "seledec/internal/delivery/http"
+	"seledec/internal/repository/postgres"
+	"seledec/internal/usecase"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	_ "github.com/lib/pq"
+)
+
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
+
+func main() {
+	// 1. Ortam Değişkenleri
+	if err := godotenv.Load(); err != nil {
+		log.Println("Uyarı: .env dosyası okunamadı, sistem environment veya default değerler kullanılacak.")
+	}
+
+	// 2. Veritabanı DSN Hazırlığı
+	host := getEnv("DB_HOST", "localhost")
+	dbPort := getEnv("DB_PORT", "5433")
+	user := getEnv("DB_USER", "postgres")
+	pass := getEnv("DB_PASSWORD", "secret")
+	dbName := getEnv("DB_NAME", "seledec")
+	ssl := getEnv("DB_SSLMODE", "disable")
+
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, dbPort, user, pass, dbName, ssl,
+	)
+
+	// 3. Veritabanı Bağlantısı
+	db, err := sqlx.Connect("postgres", dsn)
+	if err != nil {
+		log.Fatalf("Fatal: Veritabanı bağlantısı reddedildi. DSN: %s | Hata: %v", dsn, err)
+	}
+	defer db.Close()
+
+	log.Println("PostgreSQL bağlantısı başarılı!")
+
+	// 4. Echo Sunucusu ve Genel Middleware'ler
+	e := echo.New()
+	e.Use(middleware.Recover())
+	e.Use(middleware.Logger())
+	e.Use(middleware.CORS())
+
+	// 5. Dependency Injection (Bağımlılık Enjeksiyonları)
+	productRepo := postgres.NewProductRepository(db)
+	productUsecase := usecase.NewProductUsecase(productRepo)
+
+	userRepo := postgres.NewUserRepository(db)
+	userUsecase := usecase.NewUserUsecase(userRepo)
+
+	// 6. API Yönlendirmeleri (Routing)
+	v1 := e.Group("/api/v1")
+
+	// Kullanıcı işlemleri (Kayıt ve Giriş rotaları handler içinde)
+	handler.NewUserHandler(v1, userUsecase)
+
+	// Ürün işlemleri (GET ve korumalı POST rotaları handler içinde)
+	handler.NewProductHandler(v1, productUsecase)
+
+	// 7. Sunucuyu Başlatma (Graceful Shutdown ile)
+	appPort := getEnv("PORT", "8080")
+	go func() {
+		if err := e.Start(":" + appPort); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Sunucu başlatılamadı: %v", err)
+		}
+	}()
+
+	// 8. Güvenli Kapatma Sinyalleri
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt)
+	<-quit
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := e.Shutdown(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
