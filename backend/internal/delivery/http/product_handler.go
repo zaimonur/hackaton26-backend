@@ -3,7 +3,7 @@ package http
 import (
 	"net/http"
 
-	"seledec/internal/domain"
+	"drewisy/internal/domain"
 
 	"github.com/labstack/echo/v4"
 )

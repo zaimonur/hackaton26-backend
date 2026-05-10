@@ -3,7 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
-	"seledec/internal/domain"
+	"drewisy/internal/domain"
 	"strings"
 )
 

@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"time"
 
-	handler "seledec/internal/delivery/http"
-	"seledec/internal/repository/postgres"
-	"seledec/internal/usecase"
+	handler "drewisy/internal/delivery/http"
+	"drewisy/internal/repository/postgres"
+	"drewisy/internal/usecase"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
@@ -38,7 +38,7 @@ func main() {
 	dbPort := getEnv("DB_PORT", "5433")
 	user := getEnv("DB_USER", "postgres")
 	pass := getEnv("DB_PASSWORD", "secret")
-	dbName := getEnv("DB_NAME", "seledec")
+	dbName := getEnv("DB_NAME", "drewisy")
 	ssl := getEnv("DB_SSLMODE", "disable")
 
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",

@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"context"
-	"seledec/internal/domain"
+	"drewisy/internal/domain"
 
 	"github.com/jmoiron/sqlx"
 )

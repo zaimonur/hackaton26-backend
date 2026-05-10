@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"seledec/internal/domain"
+	"drewisy/internal/domain"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -67,7 +67,7 @@ func (u *userUsecase) Login(ctx context.Context, req *domain.LoginRequest) (*dom
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "seledec_hackathon_super_secret"
+		secret = "drewisy_hackathon_super_secret"
 	}
 
 	tokenString, err := token.SignedString([]byte(secret))
