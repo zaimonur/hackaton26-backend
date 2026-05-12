@@ -16,6 +16,8 @@ services:
       - DB_NAME=drewisy
       - DB_SSLMODE=disable
       - PORT=8080
+    volumes:
+      - ./backend/uploads:/root/uploads
     depends_on:
       - db
     restart: unless-stopped

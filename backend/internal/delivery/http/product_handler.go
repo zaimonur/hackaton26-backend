@@ -1,9 +1,9 @@
 package http
 
 import (
-	"net/http"
-
 	"drewisy/internal/domain"
+	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 )
@@ -16,11 +16,10 @@ type ProductHandler struct {
 func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	handler := &ProductHandler{usecase: u}
 
-	// GET isteği (ürünleri listeleme) HERKESE AÇIK
 	e.GET("/products", handler.Fetch)
 
-	// POST isteği (ürün ekleme) SADECE ADMINLERE AÇIK (Auth + Admin Middleware'leri eklendi)
-	e.POST("/products", handler.Store, AuthMiddleware(), AdminMiddleware())
+	// BURASI GÜNCELLENDİ: Artık hem admin hem staff ürün ekleyebilir
+	e.POST("/products", handler.Store, AuthMiddleware(), RBACMiddleware("admin", "staff"))
 }
 
 // respondError standart JSON hata yanıtı döner.
@@ -54,14 +53,30 @@ func (h *ProductHandler) Fetch(c echo.Context) error {
 
 // Store yeni ürün ekler.
 func (h *ProductHandler) Store(c echo.Context) error {
-	var req domain.CreateProductRequest
-	if err := c.Bind(&req); err != nil {
-		return respondError(c, http.StatusBadRequest, "Geçersiz JSON formatı")
+	// Güvenlik: Maximum 5MB dosya boyutu (OOM Koruması)
+	c.Request().ParseMultipartForm(5 << 20)
+
+	price, _ := strconv.ParseFloat(c.FormValue("price"), 64)
+
+	// Dosyanın metadata'sını (Header) formdan çek
+	file, err := c.FormFile("image")
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, "Ürün görseli eklenmelidir")
+	}
+
+	// Sadece referansları DTO'ya bind ediyoruz
+	req := domain.CreateProductRequest{
+		Title:       c.FormValue("title"),
+		Description: c.FormValue("description"),
+		Category:    c.FormValue("category"),
+		Price:       price,
+		Image:       file, // Fiziksel dosya değil, Header pointer'ı
 	}
 
 	res, err := h.usecase.Store(c.Request().Context(), &req)
 	if err != nil {
 		return respondError(c, http.StatusBadRequest, err.Error())
 	}
+
 	return respondSuccess(c, http.StatusCreated, res)
 }

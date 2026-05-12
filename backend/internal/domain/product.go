@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"mime/multipart"
 	"time"
 )
 
@@ -17,11 +18,11 @@ type Product struct {
 }
 
 type CreateProductRequest struct {
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price"`
-	Category    string  `json:"category"`
-	ImagePath   string  `json:"image_path"`
+	Title       string                `form:"title"`
+	Description string                `form:"description"`
+	Price       float64               `form:"price"`
+	Category    string                `form:"category"`
+	Image       *multipart.FileHeader `json:"-"`
 }
 
 type ProductResponse struct {

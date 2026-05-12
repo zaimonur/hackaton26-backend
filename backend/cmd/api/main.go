@@ -10,6 +10,7 @@ import (
 	"time"
 
 	handler "drewisy/internal/delivery/http"
+	"drewisy/internal/infrastructure/storage"
 	"drewisy/internal/repository/postgres"
 	"drewisy/internal/usecase"
 
@@ -28,6 +29,11 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
+
+	if err := os.MkdirAll("uploads/products", os.ModePerm); err != nil {
+		log.Fatalf("Klasör oluşturulamadı: %v", err)
+	}
+
 	// 1. Ortam Değişkenleri
 	if err := godotenv.Load(); err != nil {
 		log.Println("Uyarı: .env dosyası okunamadı, sistem environment veya default değerler kullanılacak.")
@@ -59,10 +65,13 @@ func main() {
 	e.Use(middleware.Recover())
 	e.Use(middleware.Logger())
 	e.Use(middleware.CORS())
+	e.Static("/static", "uploads")
 
 	// 5. Dependency Injection (Bağımlılık Enjeksiyonları)
+	fileStorage := storage.NewLocalStorage("uploads") // Yeni Altyapı eklendi
+
 	productRepo := postgres.NewProductRepository(db)
-	productUsecase := usecase.NewProductUsecase(productRepo)
+	productUsecase := usecase.NewProductUsecase(productRepo, fileStorage) // Storage enjekte edildi
 
 	userRepo := postgres.NewUserRepository(db)
 	userUsecase := usecase.NewUserUsecase(userRepo)

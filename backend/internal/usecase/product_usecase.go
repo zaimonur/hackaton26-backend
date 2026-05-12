@@ -2,17 +2,19 @@ package usecase
 
 import (
 	"context"
-	"errors"
 	"drewisy/internal/domain"
+	"drewisy/internal/infrastructure/storage"
+	"errors"
 	"strings"
 )
 
 type productUsecase struct {
-	repo domain.ProductRepository
+	repo    domain.ProductRepository
+	storage storage.FileStorage
 }
 
-func NewProductUsecase(r domain.ProductRepository) domain.ProductUsecase {
-	return &productUsecase{repo: r}
+func NewProductUsecase(r domain.ProductRepository, s storage.FileStorage) domain.ProductUsecase {
+	return &productUsecase{repo: r, storage: s}
 }
 
 // Kategori parametresine göre repo'yu dinamik seçer
@@ -41,14 +43,18 @@ func (u *productUsecase) Store(ctx context.Context, req *domain.CreateProductReq
 	req.Title = strings.TrimSpace(req.Title)
 	req.Category = strings.TrimSpace(req.Category)
 
-	if req.Title == "" {
-		return nil, errors.New("ürün başlığı boş olamaz")
+	if req.Title == "" || req.Category == "" || req.Price <= 0 {
+		return nil, errors.New("eksik veya hatalı ürün bilgisi")
 	}
-	if req.Category == "" {
-		return nil, errors.New("kategori boş olamaz")
+
+	if req.Image == nil {
+		return nil, errors.New("ürün görseli zorunludur")
 	}
-	if req.Price <= 0 {
-		return nil, errors.New("fiyat 0'dan büyük olmalıdır")
+
+	// Dosyayı Altyapı (Storage) katmanına gönder, URL'yi al
+	imagePath, err := u.storage.UploadImage(req.Image, "products")
+	if err != nil {
+		return nil, err
 	}
 
 	product := domain.Product{
@@ -56,11 +62,11 @@ func (u *productUsecase) Store(ctx context.Context, req *domain.CreateProductReq
 		Description: req.Description,
 		Price:       req.Price,
 		Category:    req.Category,
-		ImagePath:   req.ImagePath,
+		ImagePath:   imagePath, // Üretilen güvenli yol DB'ye gidiyor
 	}
 
 	if err := u.repo.Store(ctx, &product); err != nil {
-		return nil, err
+		return nil, errors.New("ürün veritabanına kaydedilemedi")
 	}
 
 	res := mapProductToResponse(product)

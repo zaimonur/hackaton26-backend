@@ -47,15 +47,22 @@ func AuthMiddleware() echo.MiddlewareFunc {
 	}
 }
 
-// AdminMiddleware: Kullanıcının rolünün admin olup olmadığını kontrol eder.
-func AdminMiddleware() echo.MiddlewareFunc {
+// RBACMiddleware: Belirtilen rollerden herhangi birine sahip olmayı zorunlu kılar.
+func RBACMiddleware(allowedRoles ...string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			role := c.Get("role")
-			if role != "admin" {
-				return respondError(c, http.StatusForbidden, "Sadece adminler bu işlemi yapabilir") // 403 Forbidden
+			roleObj := c.Get("role")
+			if roleObj == nil {
+				return respondError(c, http.StatusForbidden, "Erişim reddedildi: Rol bulunamadı")
 			}
-			return next(c)
+
+			userRole := roleObj.(string)
+			for _, role := range allowedRoles {
+				if role == userRole {
+					return next(c)
+				}
+			}
+			return respondError(c, http.StatusForbidden, "Bu işlem için yetkiniz yok")
 		}
 	}
 }
