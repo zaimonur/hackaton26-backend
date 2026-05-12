@@ -18,8 +18,21 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 
 	e.GET("/products", handler.Fetch)
 
-	// BURASI GÜNCELLENDİ: Artık hem admin hem staff ürün ekleyebilir
-	e.POST("/products", handler.Store, AuthMiddleware(), RBACMiddleware("admin", "staff"))
+	// Satıcının kendi ürünlerini listelemesi
+	e.GET("/seller/products", handler.FetchBySeller, AuthMiddleware(), RBACMiddleware("seller"))
+
+	// Sadece seller
+	e.POST("/products", handler.Store, AuthMiddleware(), RBACMiddleware("seller"))
+}
+
+func (h *ProductHandler) FetchBySeller(c echo.Context) error {
+	sellerID := c.Get("user_id").(string)
+
+	res, err := h.usecase.FetchBySeller(c.Request().Context(), sellerID)
+	if err != nil {
+		return respondError(c, http.StatusNotFound, err.Error())
+	}
+	return respondSuccess(c, http.StatusOK, res)
 }
 
 // respondError standart JSON hata yanıtı döner.
@@ -46,34 +59,32 @@ func (h *ProductHandler) Fetch(c echo.Context) error {
 
 	res, err := h.usecase.Fetch(c.Request().Context(), category)
 	if err != nil {
-		return respondError(c, 500, "Sunucu hatası") // Hardcoded http.StatusInternalServerError yerine 500
+		return respondError(c, http.StatusInternalServerError, "Sunucu hatası")
 	}
-	return respondSuccess(c, 200, res)
+	return respondSuccess(c, http.StatusOK, res)
 }
 
 // Store yeni ürün ekler.
 func (h *ProductHandler) Store(c echo.Context) error {
-	// Güvenlik: Maximum 5MB dosya boyutu (OOM Koruması)
 	c.Request().ParseMultipartForm(5 << 20)
 
 	price, _ := strconv.ParseFloat(c.FormValue("price"), 64)
-
-	// Dosyanın metadata'sını (Header) formdan çek
 	file, err := c.FormFile("image")
 	if err != nil {
 		return respondError(c, http.StatusBadRequest, "Ürün görseli eklenmelidir")
 	}
 
-	// Sadece referansları DTO'ya bind ediyoruz
 	req := domain.CreateProductRequest{
 		Title:       c.FormValue("title"),
 		Description: c.FormValue("description"),
 		Category:    c.FormValue("category"),
 		Price:       price,
-		Image:       file, // Fiziksel dosya değil, Header pointer'ı
+		Image:       file,
 	}
 
-	res, err := h.usecase.Store(c.Request().Context(), &req)
+	sellerID := c.Get("user_id").(string) // JWT Context
+
+	res, err := h.usecase.Store(c.Request().Context(), sellerID, &req)
 	if err != nil {
 		return respondError(c, http.StatusBadRequest, err.Error())
 	}

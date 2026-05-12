@@ -21,8 +21,8 @@ func NewUserUsecase(r domain.UserRepository) domain.UserUsecase {
 }
 
 func (u *userUsecase) Register(ctx context.Context, req *domain.RegisterRequest) (*domain.UserResponse, error) {
-	if req.Role != "admin" && req.Role != "customer" && req.Role != "staff" {
-		return nil, errors.New("geçersiz rol: admin, customer veya staff olmalı")
+	if req.Role != "admin" && req.Role != "customer" && req.Role != "seller" {
+		return nil, errors.New("geçersiz rol: admin, customer veya seller olmalı")
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)

@@ -68,21 +68,29 @@ func main() {
 	e.Static("/static", "uploads")
 
 	// 5. Dependency Injection (Bağımlılık Enjeksiyonları)
-	fileStorage := storage.NewLocalStorage("uploads") // Yeni Altyapı eklendi
-
-	productRepo := postgres.NewProductRepository(db)
-	productUsecase := usecase.NewProductUsecase(productRepo, fileStorage) // Storage enjekte edildi
+	fileStorage := storage.NewLocalStorage("uploads")
 
 	userRepo := postgres.NewUserRepository(db)
 	userUsecase := usecase.NewUserUsecase(userRepo)
 
+	// YENİ: Store Dependency Injection
+	storeRepo := postgres.NewStoreRepository(db)
+	storeUsecase := usecase.NewStoreUsecase(storeRepo)
+
+	// GÜNCELLEME: Product Dependency Injection (storeRepo içeri enjekte edildi)
+	productRepo := postgres.NewProductRepository(db)
+	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage)
+
 	// 6. API Yönlendirmeleri (Routing)
 	v1 := e.Group("/api/v1")
 
-	// Kullanıcı işlemleri (Kayıt ve Giriş rotaları handler içinde)
+	// Kullanıcı işlemleri
 	handler.NewUserHandler(v1, userUsecase)
 
-	// Ürün işlemleri (GET ve korumalı POST rotaları handler içinde)
+	// YENİ: Mağaza işlemleri
+	handler.NewStoreHandler(v1, storeUsecase)
+
+	// Ürün işlemleri
 	handler.NewProductHandler(v1, productUsecase)
 
 	// 7. Sunucuyu Başlatma (Graceful Shutdown ile)
