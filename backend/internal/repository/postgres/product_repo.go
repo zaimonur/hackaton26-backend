@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"drewisy/internal/domain"
+	"errors"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -69,4 +70,24 @@ func (r *productRepository) Store(ctx context.Context, p *domain.Product) error 
 			  RETURNING id, created_at, updated_at`
 	return r.db.QueryRowContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Category, p.ImagePath).
 		Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+}
+
+func (r *productRepository) Delete(ctx context.Context, id string, storeID string) error {
+	query := `DELETE FROM products WHERE id = $1 AND store_id = $2`
+
+	result, err := r.db.ExecContext(ctx, query, id, storeID)
+	if err != nil {
+		return err // Tip uyuşmazlığı (UUID hatası) buraya düşer
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rows == 0 {
+		return errors.New("ürün bulunamadı veya bu ürünü silme yetkiniz yok")
+	}
+
+	return nil
 }

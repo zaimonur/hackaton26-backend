@@ -110,3 +110,14 @@ func mapProductToResponse(p domain.Product) domain.ProductResponse {
 		ImagePath:   p.ImagePath,
 	}
 }
+
+func (u *productUsecase) Delete(ctx context.Context, sellerID string, productID string) error {
+	// 1. Satıcının mağazasını bul
+	store, err := u.storeRepo.GetBySellerId(ctx, sellerID)
+	if err != nil {
+		return errors.New("işlem yapılamadı: mağaza bulunamadı")
+	}
+
+	// 2. Repo'ya ürün ID'si ve Mağaza ID'sini gönder
+	return u.repo.Delete(ctx, productID, store.ID)
+}

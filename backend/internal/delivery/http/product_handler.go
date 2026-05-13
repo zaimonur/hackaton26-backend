@@ -23,6 +23,8 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 
 	// Sadece seller
 	e.POST("/products", handler.Store, AuthMiddleware(), RBACMiddleware("seller"))
+
+	e.DELETE("/products/:id", handler.Delete, AuthMiddleware(), RBACMiddleware("seller"))
 }
 
 func (h *ProductHandler) FetchBySeller(c echo.Context) error {
@@ -90,4 +92,16 @@ func (h *ProductHandler) Store(c echo.Context) error {
 	}
 
 	return respondSuccess(c, http.StatusCreated, res)
+}
+
+func (h *ProductHandler) Delete(c echo.Context) error {
+	productID := c.Param("id")
+	sellerID := c.Get("user_id").(string) // AuthMiddleware'den geliyor
+
+	err := h.usecase.Delete(c.Request().Context(), sellerID, productID)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+
+	return respondSuccess(c, http.StatusOK, "Ürün başarıyla silindi")
 }

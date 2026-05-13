@@ -8,8 +8,8 @@ import (
 
 type Product struct {
 	ID          string    `db:"id"`
-	StoreID     string    `db:"store_id"`   // Eklendi
-	StoreName   string    `db:"store_name"` // JOIN ile gelecek
+	StoreID     string    `db:"store_id"`
+	StoreName   string    `db:"store_name"`
 	Title       string    `db:"title"`
 	Description string    `db:"description"`
 	Price       float64   `db:"price"`
@@ -30,7 +30,7 @@ type CreateProductRequest struct {
 type ProductResponse struct {
 	ID          string  `json:"id"`
 	StoreID     string  `json:"store_id"`
-	StoreName   string  `json:"store_name"` // Eklendi
+	StoreName   string  `json:"store_name"`
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 	Price       float64 `json:"price"`
@@ -41,12 +41,14 @@ type ProductResponse struct {
 type ProductRepository interface {
 	Fetch(ctx context.Context) ([]Product, error)
 	FetchByCategory(ctx context.Context, category string) ([]Product, error)
-	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error) // YENİ
+	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error)
 	Store(ctx context.Context, p *Product) error
+	Delete(ctx context.Context, id string, storeID string) error
 }
 
 type ProductUsecase interface {
 	Fetch(ctx context.Context, category string) ([]ProductResponse, error)
-	FetchBySeller(ctx context.Context, sellerID string) ([]ProductResponse, error)                   // YENİ
-	Store(ctx context.Context, sellerID string, req *CreateProductRequest) (*ProductResponse, error) // sellerID eklendi
+	FetchBySeller(ctx context.Context, sellerID string) ([]ProductResponse, error)
+	Store(ctx context.Context, sellerID string, req *CreateProductRequest) (*ProductResponse, error)
+	Delete(ctx context.Context, sellerID string, productID string) error
 }
