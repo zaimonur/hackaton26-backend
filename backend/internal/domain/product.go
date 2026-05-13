@@ -42,6 +42,7 @@ type ProductRepository interface {
 	Fetch(ctx context.Context) ([]Product, error)
 	FetchByCategory(ctx context.Context, category string) ([]Product, error)
 	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error)
+	GetByID(ctx context.Context, id string) (*Product, error) // EKLENEN SATIR
 	Store(ctx context.Context, p *Product) error
 	Delete(ctx context.Context, id string, storeID string) error
 }

@@ -82,6 +82,9 @@ func main() {
 	productRepo := postgres.NewProductRepository(db)
 	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage)
 
+	orderRepo := postgres.NewOrderRepository(db)
+	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo) // productRepo enjekte edildi
+
 	//Gemini AI DI
 	geminiApiKey := getEnv("GEMINI_API_KEY", "")
 	if geminiApiKey == "" {
@@ -104,6 +107,9 @@ func main() {
 
 	//AI Handler Yönlendirmesi
 	handler.NewAIHandler(v1, aiUsecase)
+
+	// Order Yönlendirmesi
+	handler.NewOrderHandler(v1, orderUsecase)
 
 	// 7. Sunucuyu Başlatma (Graceful Shutdown ile)
 	appPort := getEnv("PORT", "8080")

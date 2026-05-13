@@ -91,3 +91,14 @@ func (r *productRepository) Delete(ctx context.Context, id string, storeID strin
 
 	return nil
 }
+
+func (r *productRepository) GetByID(ctx context.Context, id string) (*domain.Product, error) {
+	var p domain.Product
+	query := `SELECT id, store_id, title, description, price, category, image_path, created_at, updated_at 
+			  FROM products WHERE id = $1`
+	err := r.db.GetContext(ctx, &p, query, id)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
