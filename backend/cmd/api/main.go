@@ -10,6 +10,7 @@ import (
 	"time"
 
 	handler "drewisy/internal/delivery/http"
+	"drewisy/internal/infrastructure/ai"
 	"drewisy/internal/infrastructure/storage"
 	"drewisy/internal/repository/postgres"
 	"drewisy/internal/usecase"
@@ -81,6 +82,14 @@ func main() {
 	productRepo := postgres.NewProductRepository(db)
 	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage)
 
+	//Gemini AI DI
+	geminiApiKey := getEnv("GEMINI_API_KEY", "")
+	if geminiApiKey == "" {
+		log.Println("UYARI: GEMINI_API_KEY bulunamadı! AI özellikleri çalışmayacaktır.")
+	}
+	aiService := ai.NewGeminiService(geminiApiKey)
+	aiUsecase := usecase.NewAIUsecase(aiService)
+
 	// 6. API Yönlendirmeleri (Routing)
 	v1 := e.Group("/api/v1")
 
@@ -92,6 +101,9 @@ func main() {
 
 	// Ürün işlemleri
 	handler.NewProductHandler(v1, productUsecase)
+
+	//AI Handler Yönlendirmesi
+	handler.NewAIHandler(v1, aiUsecase)
 
 	// 7. Sunucuyu Başlatma (Graceful Shutdown ile)
 	appPort := getEnv("PORT", "8080")
