@@ -57,9 +57,10 @@ func respondSuccess(c echo.Context, code int, data interface{}) error {
 
 // Fetch ürün listesini getirir.
 func (h *ProductHandler) Fetch(c echo.Context) error {
-	category := c.QueryParam("category") // Query'den kategoriyi al
+	category := c.QueryParam("category")
+	query := c.QueryParam("q") // YENİ: searchQuery yakalandı
 
-	res, err := h.usecase.Fetch(c.Request().Context(), category)
+	res, err := h.usecase.Fetch(c.Request().Context(), category, query)
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "Sunucu hatası")
 	}

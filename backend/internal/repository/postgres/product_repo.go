@@ -4,6 +4,7 @@ import (
 	"context"
 	"drewisy/internal/domain"
 	"errors"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -16,30 +17,31 @@ func NewProductRepository(db *sqlx.DB) domain.ProductRepository {
 	return &productRepository{db}
 }
 
-func (r *productRepository) Fetch(ctx context.Context) ([]domain.Product, error) {
-	// JOIN ile store_name eklendi
+func (r *productRepository) Fetch(ctx context.Context, category, searchQuery string) ([]domain.Product, error) {
 	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
-			  ORDER BY p.created_at DESC`
-	var products []domain.Product
-	if err := r.db.SelectContext(ctx, &products, query); err != nil {
-		return nil, err
-	}
-	if products == nil {
-		products = []domain.Product{}
-	}
-	return products, nil
-}
+			  WHERE 1=1`
 
-func (r *productRepository) FetchByCategory(ctx context.Context, category string) ([]domain.Product, error) {
-	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.category, p.image_path, p.created_at, p.updated_at 
-			  FROM products p 
-			  JOIN stores s ON p.store_id = s.id 
-			  WHERE p.category = $1 
-			  ORDER BY p.created_at DESC`
+	var args []interface{}
+	argId := 1
+
+	if category != "" {
+		query += fmt.Sprintf(` AND p.category = $%d`, argId)
+		args = append(args, category)
+		argId++
+	}
+
+	if searchQuery != "" {
+		query += fmt.Sprintf(` AND (p.title ILIKE '%%' || $%d || '%%' OR p.category ILIKE '%%' || $%d || '%%')`, argId, argId)
+		args = append(args, searchQuery)
+		argId++
+	}
+
+	query += ` ORDER BY p.created_at DESC`
+
 	var products []domain.Product
-	if err := r.db.SelectContext(ctx, &products, query, category); err != nil {
+	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {
 		return nil, err
 	}
 	if products == nil {

@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"drewisy/internal/domain"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -52,4 +53,52 @@ func (s *geminiService) GenerateText(ctx context.Context, prompt string) (string
 	}
 
 	return "", errors.New("ai yanıtından geçerli bir metin alınamadı")
+}
+
+func (s *geminiService) SmartSearch(ctx context.Context, catalogJSON string, userQuery string) ([]string, error) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	client, err := genai.NewClient(ctxWithTimeout, option.WithAPIKey(s.apiKey))
+	if err != nil {
+		return nil, fmt.Errorf("gemini client oluşturulamadı: %v", err)
+	}
+	defer client.Close()
+
+	model := client.GenerativeModel("gemini-2.5-flash")
+
+	// Structured Output Zorlaması (Strict JSON Array)
+	model.ResponseMIMEType = "application/json"
+	model.ResponseSchema = &genai.Schema{
+		Type: genai.TypeArray,
+		Items: &genai.Schema{
+			Type: genai.TypeString,
+		},
+	}
+
+	prompt := fmt.Sprintf(`Kullanıcı e-ticaret uygulamasında şu aramayı yaptı: "%s".
+Aşağıdaki ürün kataloğunu (JSON) incele. Sadece kullanıcının arama niyetiyle eşleşen ürünlerin ID'lerini döndür.
+Katalog: %s`, userQuery, catalogJSON)
+
+	resp, err := model.GenerateContent(ctxWithTimeout, genai.Text(prompt))
+	if err != nil {
+		return nil, fmt.Errorf("ai arama başarısız: %v", err)
+	}
+
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return []string{}, nil
+	}
+
+	part := resp.Candidates[0].Content.Parts[0]
+	text, ok := part.(genai.Text)
+	if !ok {
+		return nil, errors.New("ai geçersiz bir format döndürdü")
+	}
+
+	var matchedIDs []string
+	if err := json.Unmarshal([]byte(text), &matchedIDs); err != nil {
+		return nil, errors.New("ai yanıtı parse edilemedi")
+	}
+
+	return matchedIDs, nil
 }

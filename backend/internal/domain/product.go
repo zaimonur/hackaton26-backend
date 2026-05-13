@@ -39,16 +39,15 @@ type ProductResponse struct {
 }
 
 type ProductRepository interface {
-	Fetch(ctx context.Context) ([]Product, error)
-	FetchByCategory(ctx context.Context, category string) ([]Product, error)
+	Fetch(ctx context.Context, category string, searchQuery string) ([]Product, error)
 	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error)
-	GetByID(ctx context.Context, id string) (*Product, error) // EKLENEN SATIR
+	GetByID(ctx context.Context, id string) (*Product, error)
 	Store(ctx context.Context, p *Product) error
 	Delete(ctx context.Context, id string, storeID string) error
 }
 
 type ProductUsecase interface {
-	Fetch(ctx context.Context, category string) ([]ProductResponse, error)
+	Fetch(ctx context.Context, category string, searchQuery string) ([]ProductResponse, error)
 	FetchBySeller(ctx context.Context, sellerID string) ([]ProductResponse, error)
 	Store(ctx context.Context, sellerID string, req *CreateProductRequest) (*ProductResponse, error)
 	Delete(ctx context.Context, sellerID string, productID string) error

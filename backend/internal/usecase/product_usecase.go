@@ -37,16 +37,8 @@ func (u *productUsecase) FetchBySeller(ctx context.Context, sellerID string) ([]
 }
 
 // Kategori parametresine göre repo'yu dinamik seçer
-func (u *productUsecase) Fetch(ctx context.Context, category string) ([]domain.ProductResponse, error) {
-	var products []domain.Product
-	var err error
-
-	if category != "" {
-		products, err = u.repo.FetchByCategory(ctx, category)
-	} else {
-		products, err = u.repo.Fetch(ctx)
-	}
-
+func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string) ([]domain.ProductResponse, error) {
+	products, err := u.repo.Fetch(ctx, category, searchQuery)
 	if err != nil {
 		return nil, err
 	}

@@ -91,7 +91,7 @@ func main() {
 		log.Println("UYARI: GEMINI_API_KEY bulunamadı! AI özellikleri çalışmayacaktır.")
 	}
 	aiService := ai.NewGeminiService(geminiApiKey)
-	aiUsecase := usecase.NewAIUsecase(aiService)
+	aiUsecase := usecase.NewAIUsecase(aiService, productRepo)
 
 	// 6. API Yönlendirmeleri (Routing)
 	v1 := e.Group("/api/v1")
