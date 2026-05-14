@@ -10,7 +10,7 @@ import (
 
 type productUsecase struct {
 	repo      domain.ProductRepository
-	storeRepo domain.StoreRepository // YENİ: Dependency Injection
+	storeRepo domain.StoreRepository //  Dependency Injection
 	storage   storage.FileStorage
 }
 
@@ -94,7 +94,7 @@ func mapProductToResponse(p domain.Product) domain.ProductResponse {
 	return domain.ProductResponse{
 		ID:          p.ID,
 		StoreID:     p.StoreID,
-		StoreName:   p.StoreName, // Eklendi
+		StoreName:   p.StoreName,
 		Title:       p.Title,
 		Description: p.Description,
 		Price:       p.Price,

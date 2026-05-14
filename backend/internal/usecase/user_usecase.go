@@ -68,7 +68,7 @@ func (u *userUsecase) Login(ctx context.Context, req *domain.LoginRequest) (*dom
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "drewisy_hackathon_super_secret"
+		return nil, errors.New("sunucu yapılandırma hatası: JWT_SECRET eksik")
 	}
 
 	tokenString, err := token.SignedString([]byte(secret))

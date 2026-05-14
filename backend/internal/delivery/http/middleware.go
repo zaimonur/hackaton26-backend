@@ -26,7 +26,7 @@ func AuthMiddleware() echo.MiddlewareFunc {
 			tokenString := parts[1]
 			secret := os.Getenv("JWT_SECRET")
 			if secret == "" {
-				secret = "drewisy_hackathon_super_secret"
+				return respondError(c, http.StatusInternalServerError, "Sunucu yapılandırma hatası: JWT_SECRET eksik")
 			}
 
 			token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {

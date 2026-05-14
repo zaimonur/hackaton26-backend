@@ -18,6 +18,8 @@ func NewAIHandler(e *echo.Group, u domain.AIUsecase) {
 	e.POST("/ai/generate-description", handler.GenerateDescription, AuthMiddleware(), RBACMiddleware("seller"))
 
 	e.POST("/ai/search", handler.SmartSearch)
+	// AI Özetleme Endpoint'i (Public)
+	e.GET("/products/:id/reviews/ai-summary", handler.SummarizeProductReviews)
 }
 
 func (h *AIHandler) GenerateDescription(c echo.Context) error {
@@ -47,4 +49,17 @@ func (h *AIHandler) SmartSearch(c echo.Context) error {
 	}
 
 	return respondSuccess(c, http.StatusOK, res)
+}
+
+func (h *AIHandler) SummarizeProductReviews(c echo.Context) error {
+	productID := c.Param("id")
+
+	summary, err := h.usecase.SummarizeProductReviews(c.Request().Context(), productID)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, err.Error())
+	}
+
+	return respondSuccess(c, http.StatusOK, echo.Map{
+		"summary": summary,
+	})
 }

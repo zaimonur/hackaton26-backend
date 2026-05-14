@@ -59,3 +59,26 @@ func (u *orderUsecase) CreateOrder(ctx context.Context, customerID string, req *
 		Status:      order.Status,
 	}, nil
 }
+
+// FetchSellerOrders: Satıcının siparişlerini getirir (Business Logic)
+func (u *orderUsecase) FetchSellerOrders(ctx context.Context, sellerID string) ([]domain.SellerOrderResponse, error) {
+	return u.orderRepo.FetchBySellerId(ctx, sellerID)
+}
+
+// UpdateOrderStatus: Satıcının sipariş statüsünü günceller (Business Logic & Validation)
+func (u *orderUsecase) UpdateOrderStatus(ctx context.Context, sellerID string, orderID string, req *domain.UpdateOrderStatusRequest) error {
+	// 1. İş Kuralları (Business Rule) Validasyonu: Statü sadece belirli değerler alabilir
+	validStatuses := map[string]bool{
+		"pending":   true,
+		"shipped":   true,
+		"delivered": true,
+		"cancelled": true,
+	}
+
+	if !validStatuses[req.Status] {
+		return errors.New("geçersiz sipariş statüsü")
+	}
+
+	// 2. Repository'e yönlendir (Güvenlik IDOR kontrolü SQL tarafında yapılacak)
+	return u.orderRepo.UpdateStatus(ctx, orderID, req.Status, sellerID)
+}

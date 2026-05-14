@@ -32,4 +32,5 @@ type AIService interface {
 type AIUsecase interface {
 	GenerateDescription(ctx context.Context, req *GenerateDescriptionRequest) (*GenerateDescriptionResponse, error)
 	SmartSearch(ctx context.Context, req *SmartSearchRequest) (*SmartSearchResponse, error)
+	SummarizeProductReviews(ctx context.Context, productID string) (string, error)
 }

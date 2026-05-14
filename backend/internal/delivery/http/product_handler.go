@@ -21,7 +21,6 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	// Satıcının kendi ürünlerini listelemesi
 	e.GET("/seller/products", handler.FetchBySeller, AuthMiddleware(), RBACMiddleware("seller"))
 
-	// Sadece seller
 	e.POST("/products", handler.Store, AuthMiddleware(), RBACMiddleware("seller"))
 
 	e.DELETE("/products/:id", handler.Delete, AuthMiddleware(), RBACMiddleware("seller"))
@@ -58,7 +57,7 @@ func respondSuccess(c echo.Context, code int, data interface{}) error {
 // Fetch ürün listesini getirir.
 func (h *ProductHandler) Fetch(c echo.Context) error {
 	category := c.QueryParam("category")
-	query := c.QueryParam("q") // YENİ: searchQuery yakalandı
+	query := c.QueryParam("q") //  searchQuery yakalandı
 
 	res, err := h.usecase.Fetch(c.Request().Context(), category, query)
 	if err != nil {

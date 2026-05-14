@@ -12,13 +12,15 @@ import (
 type aiUsecase struct {
 	aiService   domain.AIService
 	productRepo domain.ProductRepository
+	reviewRepo  domain.ReviewRepository
 }
 
 // DI: AIService içeri enjekte ediliyor
-func NewAIUsecase(aiService domain.AIService, productRepo domain.ProductRepository) domain.AIUsecase {
+func NewAIUsecase(aiService domain.AIService, productRepo domain.ProductRepository, reviewRepo domain.ReviewRepository) domain.AIUsecase {
 	return &aiUsecase{
 		aiService:   aiService,
 		productRepo: productRepo,
+		reviewRepo:  reviewRepo,
 	}
 }
 
@@ -31,7 +33,6 @@ func (u *aiUsecase) GenerateDescription(ctx context.Context, req *domain.Generat
 		return nil, errors.New("ürün adı ve kategorisi zorunludur")
 	}
 
-	// [KRİTİK - PROMPT ENGINEERING]
 	prompt := fmt.Sprintf(
 		"Sen uzman bir e-ticaret metin yazarısın. Ürün adı: '%s', Kategorisi: '%s', Özellikleri/Anahtar Kelimeler: '%s'. "+
 			"Bu bilgileri kullanarak satışı artıracak, SEO uyumlu, profesyonel ama samimi bir dille, "+
@@ -92,7 +93,7 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 
 	// 4. Dönen UUID'leri ProductResponse objelerine eşle
 	matchedProducts := make([]domain.ProductResponse, 0)
-	// (Not: mapProductToResponse metodu product_usecase'de private olduğu için kod tekrarı olmasın diye burada manuel mapliyoruz veya domain.go'ya taşıyabilirsin, hackathon için burada manuel maplemek en güvenlisi)
+
 	for _, id := range matchedIDs {
 		if p, exists := productMap[id]; exists {
 			matchedProducts = append(matchedProducts, domain.ProductResponse{
@@ -109,4 +110,38 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 	}
 
 	return &domain.SmartSearchResponse{Products: matchedProducts}, nil
+}
+
+func (u *aiUsecase) SummarizeProductReviews(ctx context.Context, productID string) (string, error) {
+	// 1. Ürüne ait tüm yorumları çek
+	reviews, err := u.reviewRepo.GetByProductID(ctx, productID)
+	if err != nil {
+		return "", err
+	}
+
+	// 2. Eğer yorum yoksa belirtilen mesajı dön
+	if len(reviews) == 0 {
+		return "Henüz değerlendirme yapılmamış.", nil
+	}
+
+	// 3. Yorum metinlerini birleştir
+	var fullText strings.Builder
+	for _, r := range reviews {
+		fullText.WriteString(fmt.Sprintf("- %s\n", r.Comment))
+	}
+
+	// 4. Prompt'u hazırla
+	prompt := fmt.Sprintf(
+		"Aşağıdaki müşteri yorumlarını analiz et ve bu ürünün artı/eksi yönlerini vurgulayan "+
+			"2-3 cümlelik çok kısa ve etkileyici bir özet oluştur:\n\n%s",
+		fullText.String(),
+	)
+
+	// 5. Gemini üzerinden özeti üret
+	summary, err := u.aiService.GenerateText(ctx, prompt)
+	if err != nil {
+		return "", fmt.Errorf("AI özet oluştururken hata: %v", err)
+	}
+
+	return strings.TrimSpace(summary), nil
 }

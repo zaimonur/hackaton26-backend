@@ -11,13 +11,14 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      # Değerleri hardcode yazmak yerine .env dosyasından çekiyoruz
       - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=secret
-      - DB_NAME=drewisy
-      - DB_SSLMODE=disable
-      - PORT=8080
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-drewisy}
+      - DB_SSLMODE=${DB_SSLMODE:-disable}
+      - PORT=${PORT:-8080}
     volumes:
       - ./backend/uploads:/root/uploads
     depends_on:
@@ -30,9 +31,10 @@ services:
     ports:
       - "5434:5432" # Host: 5434, Container: 5432
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=secret
-      - POSTGRES_DB=drewisy
+      # Burada da şifreyi .env dosyasındaki DB_PASSWORD değişkeninden alıyoruz
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-drewisy}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql

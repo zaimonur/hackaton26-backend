@@ -74,16 +74,19 @@ func main() {
 	userRepo := postgres.NewUserRepository(db)
 	userUsecase := usecase.NewUserUsecase(userRepo)
 
-	// YENİ: Store Dependency Injection
+	//  Store Dependency Injection
 	storeRepo := postgres.NewStoreRepository(db)
 	storeUsecase := usecase.NewStoreUsecase(storeRepo)
 
-	// GÜNCELLEME: Product Dependency Injection (storeRepo içeri enjekte edildi)
+	// Product Dependency Injection (storeRepo içeri enjekte edildi)
 	productRepo := postgres.NewProductRepository(db)
 	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage)
 
 	orderRepo := postgres.NewOrderRepository(db)
 	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo) // productRepo enjekte edildi
+
+	reviewRepo := postgres.NewReviewRepository(db)
+	reviewUsecase := usecase.NewReviewUsecase(reviewRepo)
 
 	//Gemini AI DI
 	geminiApiKey := getEnv("GEMINI_API_KEY", "")
@@ -91,7 +94,7 @@ func main() {
 		log.Println("UYARI: GEMINI_API_KEY bulunamadı! AI özellikleri çalışmayacaktır.")
 	}
 	aiService := ai.NewGeminiService(geminiApiKey)
-	aiUsecase := usecase.NewAIUsecase(aiService, productRepo)
+	aiUsecase := usecase.NewAIUsecase(aiService, productRepo, reviewRepo)
 
 	// 6. API Yönlendirmeleri (Routing)
 	v1 := e.Group("/api/v1")
@@ -99,7 +102,7 @@ func main() {
 	// Kullanıcı işlemleri
 	handler.NewUserHandler(v1, userUsecase)
 
-	// YENİ: Mağaza işlemleri
+	// Mağaza işlemleri
 	handler.NewStoreHandler(v1, storeUsecase)
 
 	// Ürün işlemleri
@@ -110,6 +113,9 @@ func main() {
 
 	// Order Yönlendirmesi
 	handler.NewOrderHandler(v1, orderUsecase)
+
+	// Review
+	handler.NewReviewHandler(v1, reviewUsecase)
 
 	// 7. Sunucuyu Başlatma (Graceful Shutdown ile)
 	appPort := getEnv("PORT", "8080")
