@@ -35,12 +35,10 @@ func main() {
 		log.Fatalf("Klasör oluşturulamadı: %v", err)
 	}
 
-	// 1. Ortam Değişkenleri
 	if err := godotenv.Load(); err != nil {
 		log.Println("Uyarı: .env dosyası okunamadı, sistem environment veya default değerler kullanılacak.")
 	}
 
-	// 2. Veritabanı DSN Hazırlığı
 	host := getEnv("DB_HOST", "localhost")
 	dbPort := getEnv("DB_PORT", "5433")
 	user := getEnv("DB_USER", "postgres")
@@ -52,7 +50,6 @@ func main() {
 		host, dbPort, user, pass, dbName, ssl,
 	)
 
-	// 3. Veritabanı Bağlantısı
 	db, err := sqlx.Connect("postgres", dsn)
 	if err != nil {
 		log.Fatalf("Fatal: Veritabanı bağlantısı reddedildi. DSN: %s | Hata: %v", dsn, err)
@@ -61,63 +58,51 @@ func main() {
 
 	log.Println("PostgreSQL bağlantısı başarılı!")
 
-	// 4. Echo Sunucusu ve Genel Middleware'ler
 	e := echo.New()
 	e.Use(middleware.Recover())
 	e.Use(middleware.Logger())
 	e.Use(middleware.CORS())
 	e.Static("/static", "uploads")
 
-	// 5. Dependency Injection (Bağımlılık Enjeksiyonları)
+	// Repolar
 	fileStorage := storage.NewLocalStorage("uploads")
-
 	userRepo := postgres.NewUserRepository(db)
-	userUsecase := usecase.NewUserUsecase(userRepo)
-
-	//  Store Dependency Injection
 	storeRepo := postgres.NewStoreRepository(db)
-	storeUsecase := usecase.NewStoreUsecase(storeRepo)
-
-	// Product Dependency Injection (storeRepo içeri enjekte edildi)
 	productRepo := postgres.NewProductRepository(db)
-	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage)
-
 	orderRepo := postgres.NewOrderRepository(db)
-	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo) // productRepo enjekte edildi
-
 	reviewRepo := postgres.NewReviewRepository(db)
-	reviewUsecase := usecase.NewReviewUsecase(reviewRepo)
+	dashboardRepo := postgres.NewDashboardRepository(db)
 
-	//Gemini AI DI
+	// AI Servisi
 	geminiApiKey := getEnv("GEMINI_API_KEY", "")
 	if geminiApiKey == "" {
 		log.Println("UYARI: GEMINI_API_KEY bulunamadı! AI özellikleri çalışmayacaktır.")
 	}
 	aiService := ai.NewGeminiService(geminiApiKey)
+
+	// Usecase'ler
+	userUsecase := usecase.NewUserUsecase(userRepo)
+	storeUsecase := usecase.NewStoreUsecase(storeRepo)
+	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage)
+	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo)
+	reviewUsecase := usecase.NewReviewUsecase(reviewRepo)
+
+	// AI Usecase (Dashboard öncesi tanımlanmalı)
 	aiUsecase := usecase.NewAIUsecase(aiService, productRepo, reviewRepo)
 
-	// 6. API Yönlendirmeleri (Routing)
+	// Dashboard Usecase (Bağımlılıkları güncellendi)
+	dashboardUsecase := usecase.NewDashboardUsecase(dashboardRepo, storeRepo, productRepo, reviewRepo, aiUsecase)
+
+	// Routing
 	v1 := e.Group("/api/v1")
-
-	// Kullanıcı işlemleri
 	handler.NewUserHandler(v1, userUsecase)
-
-	// Mağaza işlemleri
 	handler.NewStoreHandler(v1, storeUsecase)
-
-	// Ürün işlemleri
 	handler.NewProductHandler(v1, productUsecase)
-
-	//AI Handler Yönlendirmesi
 	handler.NewAIHandler(v1, aiUsecase)
-
-	// Order Yönlendirmesi
 	handler.NewOrderHandler(v1, orderUsecase)
-
-	// Review
 	handler.NewReviewHandler(v1, reviewUsecase)
+	handler.NewDashboardHandler(v1, dashboardUsecase)
 
-	// 7. Sunucuyu Başlatma (Graceful Shutdown ile)
 	appPort := getEnv("PORT", "8080")
 	go func() {
 		if err := e.Start(":" + appPort); err != nil && err != http.ErrServerClosed {
@@ -125,12 +110,11 @@ func main() {
 		}
 	}()
 
-	// 8. Güvenli Kapatma Sinyalleri
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt)
 	<-quit
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := e.Shutdown(ctx); err != nil {

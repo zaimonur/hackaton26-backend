@@ -43,6 +43,7 @@ type ReviewRepository interface {
 	Create(ctx context.Context, review *Review) error
 	GetByProductID(ctx context.Context, productID string) ([]ReviewResponse, error)
 	GetAverageRating(ctx context.Context, productID string) (float64, int, error)
+	GetRecentReviewsByStore(ctx context.Context, storeID string, limit int) ([]ReviewResponse, error)
 }
 
 // ReviewUsecase: İş mantığı katmanı arayüzü

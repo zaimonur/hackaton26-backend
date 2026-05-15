@@ -12,17 +12,13 @@ type ProductHandler struct {
 	usecase domain.ProductUsecase
 }
 
-// NewProductHandler rotaları Echo grubuna bağlar.
 func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	handler := &ProductHandler{usecase: u}
 
 	e.GET("/products", handler.Fetch)
-
-	// Satıcının kendi ürünlerini listelemesi
 	e.GET("/seller/products", handler.FetchBySeller, AuthMiddleware(), RBACMiddleware("seller"))
-
 	e.POST("/products", handler.Store, AuthMiddleware(), RBACMiddleware("seller"))
-
+	e.PATCH("/seller/products/:id", handler.UpdatePriceAndStock, AuthMiddleware(), RBACMiddleware("seller"))
 	e.DELETE("/products/:id", handler.Delete, AuthMiddleware(), RBACMiddleware("seller"))
 }
 
@@ -36,7 +32,6 @@ func (h *ProductHandler) FetchBySeller(c echo.Context) error {
 	return respondSuccess(c, http.StatusOK, res)
 }
 
-// respondError standart JSON hata yanıtı döner.
 func respondError(c echo.Context, code int, message string) error {
 	return c.JSON(code, domain.APIResponse{
 		Success: false,
@@ -45,7 +40,6 @@ func respondError(c echo.Context, code int, message string) error {
 	})
 }
 
-// respondSuccess standart JSON başarılı yanıt döner.
 func respondSuccess(c echo.Context, code int, data interface{}) error {
 	return c.JSON(code, domain.APIResponse{
 		Success: true,
@@ -54,10 +48,9 @@ func respondSuccess(c echo.Context, code int, data interface{}) error {
 	})
 }
 
-// Fetch ürün listesini getirir.
 func (h *ProductHandler) Fetch(c echo.Context) error {
 	category := c.QueryParam("category")
-	query := c.QueryParam("q") //  searchQuery yakalandı
+	query := c.QueryParam("q")
 
 	res, err := h.usecase.Fetch(c.Request().Context(), category, query)
 	if err != nil {
@@ -66,14 +59,20 @@ func (h *ProductHandler) Fetch(c echo.Context) error {
 	return respondSuccess(c, http.StatusOK, res)
 }
 
-// Store yeni ürün ekler.
 func (h *ProductHandler) Store(c echo.Context) error {
-	c.Request().ParseMultipartForm(5 << 20)
+	// Multipart form parse edilir (5MB default limit Echo tarafında yönetilir)
+	form, err := c.MultipartForm()
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, "Form verisi okunamadı")
+	}
 
 	price, _ := strconv.ParseFloat(c.FormValue("price"), 64)
-	file, err := c.FormFile("image")
-	if err != nil {
-		return respondError(c, http.StatusBadRequest, "Ürün görseli eklenmelidir")
+	stock, _ := strconv.Atoi(c.FormValue("stock"))
+
+	// Çoklu resimleri yakala
+	files := form.File["images"]
+	if len(files) == 0 {
+		return respondError(c, http.StatusBadRequest, "En az bir ürün görseli eklenmelidir")
 	}
 
 	req := domain.CreateProductRequest{
@@ -81,10 +80,11 @@ func (h *ProductHandler) Store(c echo.Context) error {
 		Description: c.FormValue("description"),
 		Category:    c.FormValue("category"),
 		Price:       price,
-		Image:       file,
+		Stock:       stock,
+		Images:      files,
 	}
 
-	sellerID := c.Get("user_id").(string) // JWT Context
+	sellerID := c.Get("user_id").(string)
 
 	res, err := h.usecase.Store(c.Request().Context(), sellerID, &req)
 	if err != nil {
@@ -94,9 +94,26 @@ func (h *ProductHandler) Store(c echo.Context) error {
 	return respondSuccess(c, http.StatusCreated, res)
 }
 
+func (h *ProductHandler) UpdatePriceAndStock(c echo.Context) error {
+	productID := c.Param("id")
+	sellerID := c.Get("user_id").(string)
+
+	var req domain.UpdateProductRequest
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "Geçersiz istek formatı")
+	}
+
+	res, err := h.usecase.UpdatePriceAndStock(c.Request().Context(), sellerID, productID, &req)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+
+	return respondSuccess(c, http.StatusOK, res)
+}
+
 func (h *ProductHandler) Delete(c echo.Context) error {
 	productID := c.Param("id")
-	sellerID := c.Get("user_id").(string) // AuthMiddleware'den geliyor
+	sellerID := c.Get("user_id").(string)
 
 	err := h.usecase.Delete(c.Request().Context(), sellerID, productID)
 	if err != nil {

@@ -37,7 +37,6 @@ func (r *reviewRepository) Create(ctx context.Context, review *domain.Review) er
 		VALUES ($1, $2, $3, $4, NOW())
 		RETURNING id, created_at
 	`
-	// QueryRowContext ile RETURNING değerleri doğrudan pointer'a map ediliyor
 	return r.db.QueryRowxContext(ctx, query, review.ProductID, review.UserID, review.Rating, review.Comment).
 		Scan(&review.ID, &review.CreatedAt)
 }
@@ -55,7 +54,6 @@ func (r *reviewRepository) GetByProductID(ctx context.Context, productID string)
 		return nil, err
 	}
 
-	// Frontend'e JSON olarak 'null' dönmesini engellemek için boş slice ataması
 	if reviews == nil {
 		reviews = []domain.ReviewResponse{}
 	}
@@ -69,7 +67,6 @@ func (r *reviewRepository) GetAverageRating(ctx context.Context, productID strin
 		FROM reviews
 		WHERE product_id = $1
 	`
-	// Anonim struct kullanılarak aggregate fonksiyon sonuçları tip güvenli şekilde scan ediliyor
 	var result struct {
 		AvgRating    float64 `db:"avg_rating"`
 		TotalReviews int     `db:"total_reviews"`
@@ -80,4 +77,24 @@ func (r *reviewRepository) GetAverageRating(ctx context.Context, productID strin
 	}
 
 	return result.AvgRating, result.TotalReviews, nil
+}
+
+func (r *reviewRepository) GetRecentReviewsByStore(ctx context.Context, storeID string, limit int) ([]domain.ReviewResponse, error) {
+	query := `
+		SELECT r.id, r.rating, r.comment, r.created_at, u.email as user_email
+		FROM reviews r
+		JOIN products p ON r.product_id = p.id
+		JOIN users u ON r.user_id = u.id
+		WHERE p.store_id = $1
+		ORDER BY r.created_at DESC
+		LIMIT $2
+	`
+	var reviews []domain.ReviewResponse
+	if err := r.db.SelectContext(ctx, &reviews, query, storeID, limit); err != nil {
+		return nil, err
+	}
+	if reviews == nil {
+		reviews = []domain.ReviewResponse{}
+	}
+	return reviews, nil
 }

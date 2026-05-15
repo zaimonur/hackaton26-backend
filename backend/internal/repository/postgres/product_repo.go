@@ -18,7 +18,7 @@ func NewProductRepository(db *sqlx.DB) domain.ProductRepository {
 }
 
 func (r *productRepository) Fetch(ctx context.Context, category, searchQuery string) ([]domain.Product, error) {
-	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.category, p.image_path, p.created_at, p.updated_at 
+	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
 			  WHERE 1=1`
@@ -51,7 +51,7 @@ func (r *productRepository) Fetch(ctx context.Context, category, searchQuery str
 }
 
 func (r *productRepository) FetchByStoreId(ctx context.Context, storeID string) ([]domain.Product, error) {
-	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.category, p.image_path, p.created_at, p.updated_at 
+	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
 			  WHERE p.store_id = $1 
@@ -66,12 +66,68 @@ func (r *productRepository) FetchByStoreId(ctx context.Context, storeID string) 
 	return products, nil
 }
 
-func (r *productRepository) Store(ctx context.Context, p *domain.Product) error {
-	query := `INSERT INTO products (store_id, title, description, price, category, image_path, created_at, updated_at) 
-			  VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) 
+func (r *productRepository) Store(ctx context.Context, p *domain.Product) (err error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+
+	query := `INSERT INTO products (store_id, title, description, price, stock, category, image_path, created_at, updated_at) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW()) 
 			  RETURNING id, created_at, updated_at`
-	return r.db.QueryRowContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Category, p.ImagePath).
+
+	err = tx.QueryRowxContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath).
 		Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return errors.New("ürün kaydedilemedi")
+	}
+
+	if len(p.Gallery) > 0 {
+		imageQuery := `INSERT INTO product_images (product_id, image_path, created_at) VALUES ($1, $2, NOW())`
+		for _, imgPath := range p.Gallery {
+			_, err = tx.ExecContext(ctx, imageQuery, p.ID, imgPath)
+			if err != nil {
+				return errors.New("ürün görselleri kaydedilemedi")
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *productRepository) UpdatePriceAndStock(ctx context.Context, productID string, storeID string, price float64, stock int) error {
+	query := `
+		UPDATE products
+		SET price = $1, stock = $2, updated_at = NOW()
+		WHERE id = $3 AND store_id = $4
+	`
+
+	result, err := r.db.ExecContext(ctx, query, price, stock, productID, storeID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return errors.New("ürün bulunamadı veya bu işlem için yetkiniz yok")
+	}
+
+	return nil
 }
 
 func (r *productRepository) Delete(ctx context.Context, id string, storeID string) error {
@@ -79,7 +135,7 @@ func (r *productRepository) Delete(ctx context.Context, id string, storeID strin
 
 	result, err := r.db.ExecContext(ctx, query, id, storeID)
 	if err != nil {
-		return err // Tip uyuşmazlığı (UUID hatası) buraya düşer
+		return err
 	}
 
 	rows, err := result.RowsAffected()
@@ -96,11 +152,43 @@ func (r *productRepository) Delete(ctx context.Context, id string, storeID strin
 
 func (r *productRepository) GetByID(ctx context.Context, id string) (*domain.Product, error) {
 	var p domain.Product
-	query := `SELECT id, store_id, title, description, price, category, image_path, created_at, updated_at 
+	query := `SELECT id, store_id, title, description, price, stock, category, image_path, created_at, updated_at 
 			  FROM products WHERE id = $1`
 	err := r.db.GetContext(ctx, &p, query, id)
 	if err != nil {
 		return nil, err
 	}
+
+	var images []string
+	imgQuery := `SELECT image_path FROM product_images WHERE product_id = $1 ORDER BY created_at ASC`
+	err = r.db.SelectContext(ctx, &images, imgQuery, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if images == nil {
+		images = []string{}
+	}
+	p.Gallery = images
+
 	return &p, nil
+}
+
+func (r *productRepository) GetLowStockProducts(ctx context.Context, storeID string, limit int) ([]domain.Product, error) {
+	query := `
+		SELECT id, store_id, title, description, price, stock, category, image_path, created_at, updated_at 
+		FROM products 
+		WHERE store_id = $1 AND stock <= 5 
+		ORDER BY stock ASC 
+		LIMIT $2
+	`
+	var products []domain.Product
+	err := r.db.SelectContext(ctx, &products, query, storeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	if products == nil {
+		products = []domain.Product{}
+	}
+	return products, nil
 }

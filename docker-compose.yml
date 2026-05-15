@@ -11,8 +11,6 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      # SADECE Docker ağına özel olanları eziyoruz. 
-      # Şifre vb. her şey doğrudan env_file ile backend/.env'den gelecek.
       - DB_HOST=db
       - DB_PORT=5432
     volumes:
@@ -27,7 +25,6 @@ services:
     ports:
       - "5434:5432"
     environment:
-      # Local Geliştirme (Dev) ortamı için veritabanı ayarlarını statik tutuyoruz.
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=secret
       - POSTGRES_DB=drewisy

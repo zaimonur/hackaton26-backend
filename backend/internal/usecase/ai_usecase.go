@@ -15,7 +15,6 @@ type aiUsecase struct {
 	reviewRepo  domain.ReviewRepository
 }
 
-// DI: AIService içeri enjekte ediliyor
 func NewAIUsecase(aiService domain.AIService, productRepo domain.ProductRepository, reviewRepo domain.ReviewRepository) domain.AIUsecase {
 	return &aiUsecase{
 		aiService:   aiService,
@@ -41,13 +40,11 @@ func (u *aiUsecase) GenerateDescription(ctx context.Context, req *domain.Generat
 		req.Title, req.Category, req.Keywords,
 	)
 
-	// AIService (Infrastructure) çağrısı
 	generatedText, err := u.aiService.GenerateText(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}
 
-	// Sadece JSON (DTO) dönecek, veritabanına kayıt yok
 	return &domain.GenerateDescriptionResponse{
 		GeneratedDescription: strings.TrimSpace(generatedText),
 	}, nil
@@ -59,7 +56,6 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 		return nil, errors.New("arama metni boş olamaz")
 	}
 
-	// 1. Tüm kataloğu çek (Pagination olmadığı için limitsiz)
 	products, err := u.productRepo.Fetch(ctx, "", "")
 	if err != nil {
 		return nil, errors.New("katalog okunamadı")
@@ -68,7 +64,6 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 		return &domain.SmartSearchResponse{Products: []domain.ProductResponse{}}, nil
 	}
 
-	// 2. Token tasarrufu için minimal JSON ve hızlı erişim için HashMap
 	type miniProduct struct {
 		ID       string `json:"id"`
 		Title    string `json:"title"`
@@ -85,15 +80,12 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 
 	catalogBytes, _ := json.Marshal(miniCatalog)
 
-	// 3. AI Servisine Gönder
 	matchedIDs, err := u.aiService.SmartSearch(ctx, string(catalogBytes), req.Query)
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. Dönen UUID'leri ProductResponse objelerine eşle
 	matchedProducts := make([]domain.ProductResponse, 0)
-
 	for _, id := range matchedIDs {
 		if p, exists := productMap[id]; exists {
 			matchedProducts = append(matchedProducts, domain.ProductResponse{
@@ -113,34 +105,74 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 }
 
 func (u *aiUsecase) SummarizeProductReviews(ctx context.Context, productID string) (string, error) {
-	// 1. Ürüne ait tüm yorumları çek
 	reviews, err := u.reviewRepo.GetByProductID(ctx, productID)
 	if err != nil {
 		return "", err
 	}
 
-	// 2. Eğer yorum yoksa belirtilen mesajı dön
 	if len(reviews) == 0 {
 		return "Henüz değerlendirme yapılmamış.", nil
 	}
 
-	// 3. Yorum metinlerini birleştir
 	var fullText strings.Builder
 	for _, r := range reviews {
 		fullText.WriteString(fmt.Sprintf("- %s\n", r.Comment))
 	}
 
-	// 4. Prompt'u hazırla
 	prompt := fmt.Sprintf(
 		"Aşağıdaki müşteri yorumlarını analiz et ve bu ürünün artı/eksi yönlerini vurgulayan "+
 			"2-3 cümlelik çok kısa ve etkileyici bir özet oluştur:\n\n%s",
 		fullText.String(),
 	)
 
-	// 5. Gemini üzerinden özeti üret
 	summary, err := u.aiService.GenerateText(ctx, prompt)
 	if err != nil {
 		return "", fmt.Errorf("AI özet oluştururken hata: %v", err)
+	}
+
+	return strings.TrimSpace(summary), nil
+}
+
+func (u *aiUsecase) GenerateDashboardSummary(ctx context.Context, salesData *domain.SalesDashboardResponse, lowStock []domain.Product, recentReviews []domain.ReviewResponse) (string, error) {
+	// Token optimizasyonu için gereksiz JSON datalarını kırpalım
+	salesJSON, _ := json.Marshal(salesData)
+
+	type miniStock struct {
+		Title string `json:"title"`
+		Stock int    `json:"stock"`
+	}
+	var minStockList []miniStock
+	for _, p := range lowStock {
+		minStockList = append(minStockList, miniStock{Title: p.Title, Stock: p.Stock})
+	}
+	stockJSON, _ := json.Marshal(minStockList)
+
+	type miniReview struct {
+		Rating  int    `json:"rating"`
+		Comment string `json:"comment"`
+	}
+	var minReviewList []miniReview
+	for _, r := range recentReviews {
+		minReviewList = append(minReviewList, miniReview{Rating: r.Rating, Comment: r.Comment})
+	}
+	reviewsJSON, _ := json.Marshal(minReviewList)
+
+	prompt := fmt.Sprintf(`Sen Drewisy e-ticaret platformunda uzman bir iş analistisin. Sana satıcının son 30 günlük satış verilerini, kritik stoklarını ve son müşteri yorumlarını veriyorum. Satıcıya doğrudan 'Sen' diye hitap ederek analiz yap. Çıktın KESİNLİKLE şu formatta bir Markdown olmalı:
+
+1. 💰 Finansal Durum: (Satışlara göre yorum)
+2. 🚨 Acil Aksiyonlar: (Stok durumuna göre uyarı)
+3. 🕵️ Müşteri Nabzı: (Yorumlara göre duygu analizi ve tavsiye)
+4. 💡 Haftanın Büyüme Fikri: (Çapraz satış veya kampanya tavsiyesi)
+5. 📱 Sosyal Medya Gönderisi: (Satıcının ürünlerinden birini pazarlaması için kopyalayabileceği emojili ve hashtagli bir post metni).
+
+VERİLER:
+Satış Verisi: %s
+Kritik Stok: %s
+Son Yorumlar: %s`, string(salesJSON), string(stockJSON), string(reviewsJSON))
+
+	summary, err := u.aiService.GenerateText(ctx, prompt)
+	if err != nil {
+		return "", fmt.Errorf("AI analiz hatası: %v", err)
 	}
 
 	return strings.TrimSpace(summary), nil

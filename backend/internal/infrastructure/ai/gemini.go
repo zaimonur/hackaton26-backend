@@ -25,7 +25,7 @@ func NewGeminiService(apiKey string) domain.AIService {
 
 func (s *geminiService) GenerateText(ctx context.Context, prompt string) (string, error) {
 	// UI kilitlemesini önlemek için 10 saniyelik katı Timeout belirliyoruz
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Gemini Client oluşturma
@@ -56,7 +56,7 @@ func (s *geminiService) GenerateText(ctx context.Context, prompt string) (string
 }
 
 func (s *geminiService) SmartSearch(ctx context.Context, catalogJSON string, userQuery string) ([]string, error) {
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	client, err := genai.NewClient(ctxWithTimeout, option.WithAPIKey(s.apiKey))

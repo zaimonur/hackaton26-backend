@@ -13,29 +13,39 @@ type Product struct {
 	Title       string    `db:"title"`
 	Description string    `db:"description"`
 	Price       float64   `db:"price"`
+	Stock       int       `db:"stock"`
 	Category    string    `db:"category"`
 	ImagePath   string    `db:"image_path"`
+	Gallery     []string  `db:"-"`
 	CreatedAt   time.Time `db:"created_at"`
 	UpdatedAt   time.Time `db:"updated_at"`
 }
 
 type CreateProductRequest struct {
-	Title       string                `form:"title"`
-	Description string                `form:"description"`
-	Price       float64               `form:"price"`
-	Category    string                `form:"category"`
-	Image       *multipart.FileHeader `json:"-"`
+	Title       string                  `form:"title"`
+	Description string                  `form:"description"`
+	Price       float64                 `form:"price"`
+	Stock       int                     `form:"stock"`
+	Category    string                  `form:"category"`
+	Images      []*multipart.FileHeader `json:"-" form:"images"`
+}
+
+type UpdateProductRequest struct {
+	Price float64 `json:"price"`
+	Stock int     `json:"stock"`
 }
 
 type ProductResponse struct {
-	ID          string  `json:"id"`
-	StoreID     string  `json:"store_id"`
-	StoreName   string  `json:"store_name"`
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price"`
-	Category    string  `json:"category"`
-	ImagePath   string  `json:"image_path"`
+	ID          string   `json:"id"`
+	StoreID     string   `json:"store_id"`
+	StoreName   string   `json:"store_name"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Price       float64  `json:"price"`
+	Stock       int      `json:"stock"`
+	Category    string   `json:"category"`
+	ImagePath   string   `json:"image_path"`
+	Gallery     []string `json:"gallery"`
 }
 
 type ProductRepository interface {
@@ -43,12 +53,15 @@ type ProductRepository interface {
 	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error)
 	GetByID(ctx context.Context, id string) (*Product, error)
 	Store(ctx context.Context, p *Product) error
+	UpdatePriceAndStock(ctx context.Context, productID string, storeID string, price float64, stock int) error
 	Delete(ctx context.Context, id string, storeID string) error
+	GetLowStockProducts(ctx context.Context, storeID string, limit int) ([]Product, error)
 }
 
 type ProductUsecase interface {
 	Fetch(ctx context.Context, category string, searchQuery string) ([]ProductResponse, error)
 	FetchBySeller(ctx context.Context, sellerID string) ([]ProductResponse, error)
 	Store(ctx context.Context, sellerID string, req *CreateProductRequest) (*ProductResponse, error)
+	UpdatePriceAndStock(ctx context.Context, sellerID string, productID string, req *UpdateProductRequest) (*ProductResponse, error)
 	Delete(ctx context.Context, sellerID string, productID string) error
 }
