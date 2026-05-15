@@ -6,20 +6,26 @@ import (
 	"time"
 )
 
+// Entity (Model)
 type Product struct {
-	ID          string    `db:"id"`
-	StoreID     string    `db:"store_id"`
-	StoreName   string    `db:"store_name"`
-	Title       string    `db:"title"`
-	Description string    `db:"description"`
-	Price       float64   `db:"price"`
-	Stock       int       `db:"stock"`
-	Category    string    `db:"category"`
-	ImagePath   string    `db:"image_path"`
-	Gallery     []string  `db:"-"`
-	CreatedAt   time.Time `db:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at"`
+	ID               string     `db:"id"`
+	StoreID          string     `db:"store_id"`
+	StoreName        string     `db:"store_name"`
+	Title            string     `db:"title"`
+	Description      string     `db:"description"`
+	Price            float64    `db:"price"`
+	Stock            int        `db:"stock"`
+	Category         string     `db:"category"`
+	ImagePath        string     `db:"image_path"`
+	Gallery          []string   `db:"-"`
+	AISummary        *string    `db:"ai_summary"`
+	AISentimentScore *string    `db:"ai_sentiment_score"`
+	AILastUpdatedAt  *time.Time `db:"ai_last_updated_at"`
+	CreatedAt        time.Time  `db:"created_at"`
+	UpdatedAt        time.Time  `db:"updated_at"`
 }
+
+// --- DTOs ---
 
 type CreateProductRequest struct {
 	Title       string                  `form:"title"`
@@ -48,6 +54,32 @@ type ProductResponse struct {
 	Gallery     []string `json:"gallery"`
 }
 
+type ProductDetailResponse struct {
+	ID               string           `json:"id"`
+	StoreID          string           `json:"store_id"`
+	StoreName        string           `json:"store_name"`
+	Title            string           `json:"title"`
+	Description      string           `json:"description"`
+	Price            float64          `json:"price"`
+	Stock            int              `json:"stock"`
+	Category         string           `json:"category"`
+	ImagePath        string           `json:"image_path"`
+	Gallery          []string         `json:"gallery"`
+	AISummary        string           `json:"ai_summary"`
+	AISentimentBadge string           `json:"ai_sentiment_badge"`
+	RecentReviews    []ReviewResponse `json:"recent_reviews"`
+}
+
+type ProductAskRequest struct {
+	Question string `json:"question" validate:"required"`
+}
+
+type ProductAskResponse struct {
+	Answer string `json:"answer"`
+}
+
+// --- Interfaces ---
+
 type ProductRepository interface {
 	Fetch(ctx context.Context, category string, searchQuery string) ([]Product, error)
 	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error)
@@ -56,6 +88,7 @@ type ProductRepository interface {
 	UpdatePriceAndStock(ctx context.Context, productID string, storeID string, price float64, stock int) error
 	Delete(ctx context.Context, id string, storeID string) error
 	GetLowStockProducts(ctx context.Context, storeID string, limit int) ([]Product, error)
+	UpdateAIInsights(ctx context.Context, productID string, summary string, sentiment string) error
 }
 
 type ProductUsecase interface {
@@ -64,4 +97,6 @@ type ProductUsecase interface {
 	Store(ctx context.Context, sellerID string, req *CreateProductRequest) (*ProductResponse, error)
 	UpdatePriceAndStock(ctx context.Context, sellerID string, productID string, req *UpdateProductRequest) (*ProductResponse, error)
 	Delete(ctx context.Context, sellerID string, productID string) error
+	GetProductDetail(ctx context.Context, id string) (*ProductDetailResponse, error)
+	AskQuestion(ctx context.Context, productID string, req *ProductAskRequest) (*ProductAskResponse, error)
 }

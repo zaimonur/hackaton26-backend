@@ -30,7 +30,6 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
-
 	if err := os.MkdirAll("uploads/products", os.ModePerm); err != nil {
 		log.Fatalf("Klasör oluşturulamadı: %v", err)
 	}
@@ -83,14 +82,17 @@ func main() {
 	// Usecase'ler
 	userUsecase := usecase.NewUserUsecase(userRepo)
 	storeUsecase := usecase.NewStoreUsecase(storeRepo)
-	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage)
-	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo)
-	reviewUsecase := usecase.NewReviewUsecase(reviewRepo)
 
-	// AI Usecase (Dashboard öncesi tanımlanmalı)
+	//  ProductUsecase bağımlılık zinciri tamamlandı
+	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage, reviewRepo, aiService)
+
+	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo)
+	reviewUsecase := usecase.NewReviewUsecase(reviewRepo, aiService, productRepo)
+
+	// AI Usecase
 	aiUsecase := usecase.NewAIUsecase(aiService, productRepo, reviewRepo)
 
-	// Dashboard Usecase (Bağımlılıkları güncellendi)
+	// Dashboard Usecase
 	dashboardUsecase := usecase.NewDashboardUsecase(dashboardRepo, storeRepo, productRepo, reviewRepo, aiUsecase)
 
 	// Routing

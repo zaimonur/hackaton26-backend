@@ -31,6 +31,9 @@ CREATE TABLE products (
     stock INT NOT NULL DEFAULT 0,
     category VARCHAR(100),
     image_path VARCHAR(500),
+    ai_summary TEXT DEFAULT NULL;
+    ai_sentiment_score VARCHAR(50) DEFAULT NULL;
+    ai_last_updated_at TIMESTAMP DEFAULT NULL;
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

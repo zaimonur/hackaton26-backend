@@ -152,8 +152,14 @@ func (r *productRepository) Delete(ctx context.Context, id string, storeID strin
 
 func (r *productRepository) GetByID(ctx context.Context, id string) (*domain.Product, error) {
 	var p domain.Product
-	query := `SELECT id, store_id, title, description, price, stock, category, image_path, created_at, updated_at 
-			  FROM products WHERE id = $1`
+	query := `
+    SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, 
+           p.category, p.image_path, p.ai_summary, p.ai_sentiment_score, p.ai_last_updated_at, 
+           p.created_at, p.updated_at 
+    FROM products p
+    JOIN stores s ON p.store_id = s.id
+    WHERE p.id = $1
+	`
 	err := r.db.GetContext(ctx, &p, query, id)
 	if err != nil {
 		return nil, err
@@ -172,6 +178,16 @@ func (r *productRepository) GetByID(ctx context.Context, id string) (*domain.Pro
 	p.Gallery = images
 
 	return &p, nil
+}
+
+func (r *productRepository) UpdateAIInsights(ctx context.Context, productID string, summary string, sentiment string) error {
+	query := `
+		UPDATE products 
+		SET ai_summary = $1, ai_sentiment_score = $2, ai_last_updated_at = NOW()
+		WHERE id = $3
+	`
+	_, err := r.db.ExecContext(ctx, query, summary, sentiment, productID)
+	return err
 }
 
 func (r *productRepository) GetLowStockProducts(ctx context.Context, storeID string, limit int) ([]domain.Product, error) {
