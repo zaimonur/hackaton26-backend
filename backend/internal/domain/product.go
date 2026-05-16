@@ -85,6 +85,16 @@ type ProductLightweight struct {
 	ShortDescription string `json:"short_description" db:"short_description"`
 }
 
+type UpdateProductFullRequest struct {
+	Title       string                  `form:"title"`
+	Description string                  `form:"description"`
+	Price       float64                 `form:"price"`
+	Stock       int                     `form:"stock"`
+	Category    string                  `form:"category"`
+	KeptImages  string                  `form:"kept_images"` // JSON string olarak gelecek
+	Images      []*multipart.FileHeader `json:"-" form:"images"`
+}
+
 // --- Interfaces ---
 
 type ProductRepository interface {
@@ -100,6 +110,7 @@ type ProductRepository interface {
 	GetCategories(ctx context.Context) ([]string, error)
 	GetAllForAI(ctx context.Context) ([]ProductLightweight, error)
 	GetByIDs(ctx context.Context, ids []string) ([]Product, error)
+	UpdateFull(ctx context.Context, p *Product) error
 }
 
 type ProductUsecase interface {
@@ -112,4 +123,5 @@ type ProductUsecase interface {
 	AskQuestion(ctx context.Context, productID string, req *ProductAskRequest) (*ProductAskResponse, error)
 	GetBestsellers(ctx context.Context) ([]ProductResponse, error)
 	GetCategories(ctx context.Context) ([]string, error)
+	UpdateFull(ctx context.Context, sellerID string, productID string, req *UpdateProductFullRequest) (*ProductResponse, error)
 }

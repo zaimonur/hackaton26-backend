@@ -28,6 +28,8 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 
 	e.GET("/products/bestsellers", handler.GetBestsellers)
 	e.GET("/categories", handler.GetCategories)
+
+	e.PUT("/seller/products/:id", handler.UpdateProductFull, AuthMiddleware(), RBACMiddleware("seller"))
 }
 
 func (h *ProductHandler) GetProductDetail(c echo.Context) error {
@@ -170,5 +172,36 @@ func (h *ProductHandler) GetCategories(c echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "Kategoriler getirilemedi")
 	}
+	return respondSuccess(c, http.StatusOK, res)
+}
+
+func (h *ProductHandler) UpdateProductFull(c echo.Context) error {
+	productID := c.Param("id")
+	sellerID := c.Get("user_id").(string)
+
+	form, err := c.MultipartForm()
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, "Form verisi okunamadı")
+	}
+
+	price, _ := strconv.ParseFloat(c.FormValue("price"), 64)
+	stock, _ := strconv.Atoi(c.FormValue("stock"))
+
+	// DÜZELTME 1: Images alanı form.File["images"] ile DTO'ya bağlandı
+	req := domain.UpdateProductFullRequest{
+		Title:       c.FormValue("title"),
+		Description: c.FormValue("description"),
+		Category:    c.FormValue("category"),
+		Price:       price,
+		Stock:       stock,
+		KeptImages:  c.FormValue("kept_images"),
+		Images:      form.File["images"],
+	}
+
+	res, err := h.usecase.UpdateFull(c.Request().Context(), sellerID, productID, &req)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+
 	return respondSuccess(c, http.StatusOK, res)
 }

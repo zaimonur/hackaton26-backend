@@ -299,5 +299,68 @@ func (u *productUsecase) GetBestsellers(ctx context.Context) ([]domain.ProductRe
 }
 
 func (u *productUsecase) GetCategories(ctx context.Context) ([]string, error) {
-	return u.repo.GetCategories(ctx)
+	// DB yerine AI analizi için sabit liste dönülüyor
+	return []string{
+		"Giyim", "Elektronik", "Ev & Yaşam", "Kozmetik & Kişisel Bakım",
+		"Spor & Outdoor", "Kitap & Hobi", "Takı & Aksesuar", "Bitki & Çiçek",
+	}, nil
+}
+
+func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, productID string, req *domain.UpdateProductFullRequest) (*domain.ProductResponse, error) {
+	store, err := u.storeRepo.GetBySellerId(ctx, sellerID)
+	if err != nil {
+		return nil, errors.New("işlem yapılamadı: mağaza bulunamadı")
+	}
+
+	req.Title = strings.TrimSpace(req.Title)
+	req.Category = strings.TrimSpace(req.Category)
+
+	if req.Title == "" || req.Category == "" || req.Price <= 0 {
+		return nil, errors.New("eksik veya hatalı ürün bilgisi")
+	}
+
+	var gallery []string
+
+	// 1. Eski resimleri JSON'dan parse et
+	if req.KeptImages != "" {
+		if err := json.Unmarshal([]byte(req.KeptImages), &gallery); err != nil {
+			return nil, errors.New("kept_images geçerli bir JSON array formatında olmalıdır")
+		}
+	}
+
+	// 2. Yeni resimleri Storage'a yükle ve galeriye ekle
+	for _, img := range req.Images {
+		path, err := u.storage.UploadImage(img, "products")
+		if err != nil {
+			return nil, err
+		}
+		gallery = append(gallery, path)
+	}
+
+	// 3. Sıfır resim kontrolü
+	if len(gallery) == 0 {
+		return nil, errors.New("ürünün en az bir görseli bulunmak zorundadır")
+	}
+
+	// 4. Product modelini bağla
+	product := domain.Product{
+		ID:          productID,
+		StoreID:     store.ID,
+		StoreName:   store.Name,
+		Title:       req.Title,
+		Description: req.Description,
+		Price:       req.Price,
+		Stock:       req.Stock,
+		Category:    req.Category,
+		ImagePath:   gallery[0], // İlk resim her zaman kapak fotoğrafı
+		Gallery:     gallery,
+	}
+
+	// 5. Veritabanında Transaction'ı tetikle
+	if err := u.repo.UpdateFull(ctx, &product); err != nil {
+		return nil, err
+	}
+
+	res := mapProductToResponse(product)
+	return &res, nil
 }

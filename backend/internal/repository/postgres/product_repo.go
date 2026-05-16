@@ -60,6 +60,21 @@ func (r *productRepository) FetchByStoreId(ctx context.Context, storeID string) 
 	if err := r.db.SelectContext(ctx, &products, query, storeID); err != nil {
 		return nil, err
 	}
+
+	// DÜZELTME 2: N+1 Sorgu ile Galeri (Gallery) verilerinin doldurulması
+	imgQuery := `SELECT image_path FROM product_images WHERE product_id = $1 ORDER BY created_at ASC`
+	for i := range products {
+		var images []string
+		err := r.db.SelectContext(ctx, &images, imgQuery, products[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		if images == nil {
+			images = []string{}
+		}
+		products[i].Gallery = images
+	}
+
 	if products == nil {
 		products = []domain.Product{}
 	}
@@ -282,4 +297,60 @@ func (r *productRepository) GetByIDs(ctx context.Context, ids []string) ([]domai
 		products = []domain.Product{}
 	}
 	return products, nil
+}
+
+func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (err error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	// Panic ve Error anında güvenli Rollback mekanizması
+	defer func() {
+		if rec := recover(); rec != nil {
+			tx.Rollback()
+			panic(rec)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+
+	// 1. Ana ürün bilgilerini güncelle (IDOR koruması: Sadece ilgili satıcının mağazasına aitse günceller)
+	updateQuery := `
+		UPDATE products 
+		SET title = $1, description = $2, price = $3, stock = $4, category = $5, image_path = $6, updated_at = NOW()
+		WHERE id = $7 AND store_id = $8
+	`
+	result, err := tx.ExecContext(ctx, updateQuery, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, p.ID, p.StoreID)
+	if err != nil {
+		return errors.New("ürün bilgileri güncellenirken veritabanı hatası oluştu")
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("ürün bulunamadı veya bu işlem için yetkiniz yok")
+	}
+
+	// 2. Eski galeriyi temizle
+	deleteImagesQuery := `DELETE FROM product_images WHERE product_id = $1`
+	if _, err = tx.ExecContext(ctx, deleteImagesQuery, p.ID); err != nil {
+		return errors.New("eski ürün görselleri silinemedi")
+	}
+
+	// 3. Yeni galeriyi yaz
+	if len(p.Gallery) > 0 {
+		insertImageQuery := `INSERT INTO product_images (product_id, image_path, created_at) VALUES ($1, $2, NOW())`
+		for _, imgPath := range p.Gallery {
+			if _, err = tx.ExecContext(ctx, insertImageQuery, p.ID, imgPath); err != nil {
+				return errors.New("yeni ürün görselleri kaydedilemedi")
+			}
+		}
+	}
+
+	return nil
 }
