@@ -20,6 +20,8 @@ func NewAIHandler(e *echo.Group, u domain.AIUsecase) {
 	e.POST("/ai/search", handler.SmartSearch)
 	// AI Özetleme Endpoint'i (Public)
 	e.GET("/products/:id/reviews/ai-summary", handler.SummarizeProductReviews)
+
+	e.GET("/ai/recommendations", handler.GetHeroRecommendations, AuthMiddleware(), RBACMiddleware("customer"))
 }
 
 func (h *AIHandler) GenerateDescription(c echo.Context) error {
@@ -62,4 +64,15 @@ func (h *AIHandler) SummarizeProductReviews(c echo.Context) error {
 	return respondSuccess(c, http.StatusOK, echo.Map{
 		"summary": summary,
 	})
+}
+
+func (h *AIHandler) GetHeroRecommendations(c echo.Context) error {
+	userID := c.Get("user_id").(string)
+
+	res, err := h.usecase.GetHeroRecommendations(c.Request().Context(), userID)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, err.Error())
+	}
+
+	return respondSuccess(c, http.StatusOK, res)
 }

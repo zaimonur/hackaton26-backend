@@ -78,6 +78,13 @@ type ProductAskResponse struct {
 	Answer string `json:"answer"`
 }
 
+type ProductLightweight struct {
+	ID               string `json:"id" db:"id"`
+	Title            string `json:"title" db:"title"`
+	Category         string `json:"category" db:"category"`
+	ShortDescription string `json:"short_description" db:"short_description"`
+}
+
 // --- Interfaces ---
 
 type ProductRepository interface {
@@ -89,6 +96,10 @@ type ProductRepository interface {
 	Delete(ctx context.Context, id string, storeID string) error
 	GetLowStockProducts(ctx context.Context, storeID string, limit int) ([]Product, error)
 	UpdateAIInsights(ctx context.Context, productID string, summary string, sentiment string) error
+	GetBestsellers(ctx context.Context, limit int) ([]Product, error)
+	GetCategories(ctx context.Context) ([]string, error)
+	GetAllForAI(ctx context.Context) ([]ProductLightweight, error)
+	GetByIDs(ctx context.Context, ids []string) ([]Product, error)
 }
 
 type ProductUsecase interface {
@@ -99,4 +110,6 @@ type ProductUsecase interface {
 	Delete(ctx context.Context, sellerID string, productID string) error
 	GetProductDetail(ctx context.Context, id string) (*ProductDetailResponse, error)
 	AskQuestion(ctx context.Context, productID string, req *ProductAskRequest) (*ProductAskResponse, error)
+	GetBestsellers(ctx context.Context) ([]ProductResponse, error)
+	GetCategories(ctx context.Context) ([]string, error)
 }

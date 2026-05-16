@@ -25,6 +25,9 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	// PDP (Public) Rotaları
 	e.GET("/products/:id", handler.GetProductDetail)
 	e.POST("/products/:id/ask", handler.AskQuestion)
+
+	e.GET("/products/bestsellers", handler.GetBestsellers)
+	e.GET("/categories", handler.GetCategories)
 }
 
 func (h *ProductHandler) GetProductDetail(c echo.Context) error {
@@ -152,4 +155,20 @@ func (h *ProductHandler) Delete(c echo.Context) error {
 	}
 
 	return respondSuccess(c, http.StatusOK, "Ürün başarıyla silindi")
+}
+
+func (h *ProductHandler) GetBestsellers(c echo.Context) error {
+	res, err := h.usecase.GetBestsellers(c.Request().Context())
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "En çok satanlar getirilemedi")
+	}
+	return respondSuccess(c, http.StatusOK, res)
+}
+
+func (h *ProductHandler) GetCategories(c echo.Context) error {
+	res, err := h.usecase.GetCategories(c.Request().Context())
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "Kategoriler getirilemedi")
+	}
+	return respondSuccess(c, http.StatusOK, res)
 }

@@ -31,9 +31,10 @@ CREATE TABLE products (
     stock INT NOT NULL DEFAULT 0,
     category VARCHAR(100),
     image_path VARCHAR(500),
-    ai_summary TEXT DEFAULT NULL;
-    ai_sentiment_score VARCHAR(50) DEFAULT NULL;
-    ai_last_updated_at TIMESTAMP DEFAULT NULL;
+    ai_summary TEXT DEFAULT NULL,
+    ai_sentiment_score VARCHAR(50) DEFAULT NULL,
+    ai_sentiment_badge VARCHAR(100) DEFAULT NULL, -- YENİ: Anasayfa rozetleri için
+    ai_last_updated_at TIMESTAMP DEFAULT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -78,13 +79,22 @@ CREATE TABLE IF NOT EXISTS reviews (
     CONSTRAINT unique_product_user_review UNIQUE(product_id, user_id)
 );
 
--- 7. HIZLANDIRICI İNDEKSLER
+-- 7. USER_VIEW_HISTORY Tablosu (AI ve Öneriler için Ayak İzleri)
+CREATE TABLE user_view_history (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    viewed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_user_product_history UNIQUE(user_id, product_id)
+);
+
+-- 8. HIZLANDIRICI İNDEKSLER
 CREATE INDEX idx_orders_customer_id ON orders(customer_id);
 CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_store_id ON products(store_id);
 CREATE INDEX idx_stores_seller_id ON stores(seller_id);
 CREATE INDEX idx_orders_status_date ON orders(status, created_at DESC);
 CREATE INDEX idx_order_items_product_id ON order_items(product_id);
-
--- Galeri fotoğraflarını çekerken hızlandırmak için
+CREATE INDEX idx_user_view_history_user_id ON user_view_history(user_id);
+CREATE INDEX idx_user_view_history_viewed_at ON user_view_history(viewed_at DESC);
 CREATE INDEX idx_product_images_product_id ON product_images(product_id);

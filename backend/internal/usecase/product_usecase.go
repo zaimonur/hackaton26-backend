@@ -4,6 +4,7 @@ import (
 	"context"
 	"drewisy/internal/domain"
 	"drewisy/internal/infrastructure/storage"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -41,9 +42,35 @@ func (u *productUsecase) FetchBySeller(ctx context.Context, sellerID string) ([]
 }
 
 func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string) ([]domain.ProductResponse, error) {
-	products, err := u.repo.Fetch(ctx, category, searchQuery)
-	if err != nil {
-		return nil, err
+	searchQuery = strings.TrimSpace(searchQuery)
+	wordCount := len(strings.Fields(searchQuery))
+
+	var products []domain.Product
+	var err error
+
+	// Smart Search Routing (2 Kelime Kuralı)
+	if wordCount > 2 {
+		catalog, err := u.repo.GetAllForAI(ctx)
+		if err != nil {
+			return nil, errors.New("ai araması için katalog okunamadı")
+		}
+
+		catalogBytes, _ := json.Marshal(catalog)
+		matchedIDs, err := u.aiService.SmartSearch(ctx, string(catalogBytes), searchQuery)
+		if err != nil {
+			return nil, err
+		}
+
+		products, err = u.repo.GetByIDs(ctx, matchedIDs)
+		if err != nil {
+			return nil, errors.New("ai eşleşmeleri veritabanından çekilemedi")
+		}
+	} else {
+		// Normal ILIKE Fallback
+		products, err = u.repo.Fetch(ctx, category, searchQuery)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	res := make([]domain.ProductResponse, 0, len(products))
@@ -256,4 +283,21 @@ func mapProductToResponse(p domain.Product) domain.ProductResponse {
 		ImagePath:   p.ImagePath,
 		Gallery:     gallery,
 	}
+}
+
+func (u *productUsecase) GetBestsellers(ctx context.Context) ([]domain.ProductResponse, error) {
+	products, err := u.repo.GetBestsellers(ctx, 10) // LIMIT 10
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]domain.ProductResponse, 0, len(products))
+	for _, p := range products {
+		res = append(res, mapProductToResponse(p))
+	}
+	return res, nil
+}
+
+func (u *productUsecase) GetCategories(ctx context.Context) ([]string, error) {
+	return u.repo.GetCategories(ctx)
 }

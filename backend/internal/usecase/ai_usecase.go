@@ -13,13 +13,15 @@ type aiUsecase struct {
 	aiService   domain.AIService
 	productRepo domain.ProductRepository
 	reviewRepo  domain.ReviewRepository
+	historyRepo domain.HistoryRepository
 }
 
-func NewAIUsecase(aiService domain.AIService, productRepo domain.ProductRepository, reviewRepo domain.ReviewRepository) domain.AIUsecase {
+func NewAIUsecase(aiService domain.AIService, productRepo domain.ProductRepository, reviewRepo domain.ReviewRepository, historyRepo domain.HistoryRepository) domain.AIUsecase {
 	return &aiUsecase{
 		aiService:   aiService,
 		productRepo: productRepo,
 		reviewRepo:  reviewRepo,
+		historyRepo: historyRepo,
 	}
 }
 
@@ -176,4 +178,69 @@ Son Yorumlar: %s`, string(salesJSON), string(stockJSON), string(reviewsJSON))
 	}
 
 	return strings.TrimSpace(summary), nil
+}
+
+func (u *aiUsecase) GetHeroRecommendations(ctx context.Context, userID string) (*domain.HeroRecommendationResponse, error) {
+	history, err := u.historyRepo.GetByUserID(ctx, userID, 20)
+	if err != nil {
+		return nil, errors.New("geçmiş verisi alınamadı")
+	}
+
+	catalog, err := u.productRepo.GetAllForAI(ctx)
+	if err != nil {
+		return nil, errors.New("katalog verisi alınamadı")
+	}
+
+	historyJSON, _ := json.Marshal(history)
+	catalogJSON, _ := json.Marshal(catalog)
+
+	prompt := fmt.Sprintf(`Sen bir yapay zeka alışveriş asistanısın. Müşterinin son incelediği ürünler şunlardır: %s.
+Sitemizdeki tüm aktif ürünler (Katalog) şunlardır: %s.
+Müşterinin zevkine en uygun 12 ürünü katalogdan seç ve bu koleksiyon için yaratıcı, dikkat çekici bir başlık (hero_title) üret.
+Çıktı SADECE raw JSON formatında olmalıdır. Başına veya sonuna "json" gibi markdown işaretleri, selamlaşma veya herhangi bir düz metin KESİNLİKLE ekleme.
+Önereceğin ID'ler kesinlikle sana sağladığım katalogda var olan ID'ler olmalıdır.
+Beklenen format: {"hero_title": "...", "recommended_product_ids": ["uuid-1", "uuid-2", "uuid-3"]}`, string(historyJSON), string(catalogJSON))
+
+	aiResText, err := u.aiService.GenerateText(ctx, prompt)
+	if err != nil {
+		fmt.Println("❌ GEMINI API HATASI:", err)
+		return nil, errors.New("yapay zeka servisi şu an yanıt veremiyor")
+	}
+
+	// TERMINALE GEMINI'NIN NE DÖNDÜĞÜNÜ BASIYORUZ (HATA AYIKLAMA İÇİN)
+	fmt.Println("=== 🤖 GEMINI RAW RESPONSE ===")
+	fmt.Println(aiResText)
+	fmt.Println("==============================")
+
+	cleanJSON := strings.TrimSpace(aiResText)
+	cleanJSON = strings.TrimPrefix(cleanJSON, "```json")
+	cleanJSON = strings.TrimPrefix(cleanJSON, "```")
+	cleanJSON = strings.TrimSuffix(cleanJSON, "```")
+	cleanJSON = strings.TrimSpace(cleanJSON)
+
+	var aiDTO domain.AIRecommendationJSON
+	if err := json.Unmarshal([]byte(cleanJSON), &aiDTO); err != nil {
+		fmt.Println("❌ JSON PARSE ERROR:", err)
+		fmt.Println("🧼 TEMİZLENMEYE ÇALIŞILAN JSON:", cleanJSON)
+		return nil, errors.New("ai yanıtı uygun formatta okunamadı")
+	}
+
+	recommendedProducts, err := u.productRepo.GetByIDs(ctx, aiDTO.RecommendedProductIDs)
+	if err != nil {
+		return nil, errors.New("önerilen ürünler veritabanından çekilemedi")
+	}
+
+	resProducts := make([]domain.ProductResponse, 0, len(recommendedProducts))
+	for _, p := range recommendedProducts {
+		resProducts = append(resProducts, domain.ProductResponse{
+			ID: p.ID, StoreID: p.StoreID, StoreName: p.StoreName, Title: p.Title,
+			Description: p.Description, Price: p.Price, Stock: p.Stock,
+			Category: p.Category, ImagePath: p.ImagePath, Gallery: []string{},
+		})
+	}
+
+	return &domain.HeroRecommendationResponse{
+		HeroTitle:           aiDTO.HeroTitle,
+		RecommendedProducts: resProducts,
+	}, nil
 }

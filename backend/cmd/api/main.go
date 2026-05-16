@@ -71,6 +71,8 @@ func main() {
 	orderRepo := postgres.NewOrderRepository(db)
 	reviewRepo := postgres.NewReviewRepository(db)
 	dashboardRepo := postgres.NewDashboardRepository(db)
+	historyRepo := postgres.NewHistoryRepository(db)
+	historyUsecase := usecase.NewHistoryUsecase(historyRepo)
 
 	// AI Servisi
 	geminiApiKey := getEnv("GEMINI_API_KEY", "")
@@ -90,7 +92,7 @@ func main() {
 	reviewUsecase := usecase.NewReviewUsecase(reviewRepo, aiService, productRepo)
 
 	// AI Usecase
-	aiUsecase := usecase.NewAIUsecase(aiService, productRepo, reviewRepo)
+	aiUsecase := usecase.NewAIUsecase(aiService, productRepo, reviewRepo, historyRepo)
 
 	// Dashboard Usecase
 	dashboardUsecase := usecase.NewDashboardUsecase(dashboardRepo, storeRepo, productRepo, reviewRepo, aiUsecase)
@@ -104,6 +106,7 @@ func main() {
 	handler.NewOrderHandler(v1, orderUsecase)
 	handler.NewReviewHandler(v1, reviewUsecase)
 	handler.NewDashboardHandler(v1, dashboardUsecase)
+	handler.NewHistoryHandler(v1, historyUsecase) // v1: echo group
 
 	appPort := getEnv("PORT", "8080")
 	go func() {

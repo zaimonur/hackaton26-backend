@@ -208,3 +208,78 @@ func (r *productRepository) GetLowStockProducts(ctx context.Context, storeID str
 	}
 	return products, nil
 }
+
+func (r *productRepository) GetBestsellers(ctx context.Context, limit int) ([]domain.Product, error) {
+	query := `
+		SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, 
+		       p.stock, p.category, p.image_path, p.created_at, p.updated_at 
+		FROM products p
+		JOIN stores s ON p.store_id = s.id
+		JOIN order_items oi ON p.id = oi.product_id
+		GROUP BY p.id, p.store_id, s.name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at
+		ORDER BY SUM(oi.quantity) DESC
+		LIMIT $1
+	`
+	var products []domain.Product
+	if err := r.db.SelectContext(ctx, &products, query, limit); err != nil {
+		return nil, err
+	}
+	if products == nil {
+		products = []domain.Product{}
+	}
+	return products, nil
+}
+
+func (r *productRepository) GetCategories(ctx context.Context) ([]string, error) {
+	query := `SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != '' ORDER BY category ASC`
+	var categories []string
+	if err := r.db.SelectContext(ctx, &categories, query); err != nil {
+		return nil, err
+	}
+	if categories == nil {
+		categories = []string{}
+	}
+	return categories, nil
+}
+
+func (r *productRepository) GetAllForAI(ctx context.Context) ([]domain.ProductLightweight, error) {
+	query := `SELECT id, title, category, LEFT(description, 100) AS short_description FROM products`
+	var items []domain.ProductLightweight
+
+	if err := r.db.SelectContext(ctx, &items, query); err != nil {
+		return nil, err
+	}
+
+	if items == nil {
+		items = []domain.ProductLightweight{}
+	}
+	return items, nil
+}
+
+func (r *productRepository) GetByIDs(ctx context.Context, ids []string) ([]domain.Product, error) {
+	if len(ids) == 0 {
+		return []domain.Product{}, nil // Early return: Gereksiz SQL sorgusunu engeller
+	}
+
+	query, args, err := sqlx.In(`
+		SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
+		FROM products p 
+		JOIN stores s ON p.store_id = s.id 
+		WHERE p.id IN (?)
+	`, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	query = r.db.Rebind(query) // PostgreSQL $1, $2 syntax binding
+
+	var products []domain.Product
+	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {
+		return nil, err
+	}
+
+	if products == nil {
+		products = []domain.Product{}
+	}
+	return products, nil
+}
