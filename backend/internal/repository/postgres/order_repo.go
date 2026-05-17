@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"drewisy/internal/domain"
 	"errors"
 	"time"
@@ -133,7 +134,7 @@ func (r *orderRepository) FetchBySellerId(ctx context.Context, sellerID string) 
 }
 
 // UpdateStatus: IDOR Korumalı Update işlemi. Sadece satıcının kendine ait mağazasıyla ilişkili siparişleri güncelleyebilir.
-func (r *orderRepository) UpdateStatus(ctx context.Context, orderID string, status string, sellerID string) error {
+func (r *orderRepository) UpdateStatus(ctx context.Context, orderID string, status string, sellerID string) (string, error) {
 	query := `
 		UPDATE orders 
 		SET status = $1, updated_at = NOW()
@@ -145,22 +146,17 @@ func (r *orderRepository) UpdateStatus(ctx context.Context, orderID string, stat
 			JOIN stores s ON p.store_id = s.id
 			WHERE oi.order_id = orders.id AND s.seller_id = $3
 		)
+		RETURNING customer_id
 	`
 
-	result, err := r.db.ExecContext(ctx, query, status, orderID, sellerID)
+	var customerID string
+	err := r.db.QueryRowxContext(ctx, query, status, orderID, sellerID).Scan(&customerID)
 	if err != nil {
-		return err
+		if err == sql.ErrNoRows {
+			return "", errors.New("sipariş bulunamadı veya bu işlemi yapmak için yetkiniz yok")
+		}
+		return "", err
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	// Eğer 0 satır güncellendiyse ya sipariş yoktur ya da satıcının yetkisi (IDOR) yoktur.
-	if rowsAffected == 0 {
-		return errors.New("sipariş bulunamadı veya bu işlemi yapmak için yetkiniz yok")
-	}
-
-	return nil
+	return customerID, nil
 }

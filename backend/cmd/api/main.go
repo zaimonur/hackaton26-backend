@@ -12,6 +12,7 @@ import (
 	handler "drewisy/internal/delivery/http"
 	"drewisy/internal/infrastructure/ai"
 	"drewisy/internal/infrastructure/storage"
+	"drewisy/internal/infrastructure/websocket"
 	"drewisy/internal/repository/postgres"
 	"drewisy/internal/usecase"
 
@@ -63,6 +64,9 @@ func main() {
 	e.Use(middleware.CORS())
 	e.Static("/static", "uploads")
 
+	// WebSocket Hub
+	hub := websocket.NewHub()
+
 	// Repolar
 	fileStorage := storage.NewLocalStorage("uploads")
 	userRepo := postgres.NewUserRepository(db)
@@ -73,6 +77,8 @@ func main() {
 	dashboardRepo := postgres.NewDashboardRepository(db)
 	historyRepo := postgres.NewHistoryRepository(db)
 	historyUsecase := usecase.NewHistoryUsecase(historyRepo)
+	messageRepo := postgres.NewMessageRepository(db)
+	notificationRepo := postgres.NewNotificationRepository(db)
 
 	// AI Servisi
 	geminiApiKey := getEnv("GEMINI_API_KEY", "")
@@ -88,7 +94,7 @@ func main() {
 	//  ProductUsecase bağımlılık zinciri tamamlandı
 	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage, reviewRepo, aiService)
 
-	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo)
+	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo, notificationRepo, hub)
 	reviewUsecase := usecase.NewReviewUsecase(reviewRepo, aiService, productRepo)
 
 	// AI Usecase
@@ -96,6 +102,10 @@ func main() {
 
 	// Dashboard Usecase
 	dashboardUsecase := usecase.NewDashboardUsecase(dashboardRepo, storeRepo, productRepo, reviewRepo, aiUsecase)
+
+	//Mesaj ve Bildirim Usecaseleri
+	messageUsecase := usecase.NewMessageUsecase(messageRepo, hub)
+	notificationUsecase := usecase.NewNotificationUsecase(notificationRepo)
 
 	// Routing
 	v1 := e.Group("/api/v1")
@@ -106,7 +116,10 @@ func main() {
 	handler.NewOrderHandler(v1, orderUsecase)
 	handler.NewReviewHandler(v1, reviewUsecase)
 	handler.NewDashboardHandler(v1, dashboardUsecase)
-	handler.NewHistoryHandler(v1, historyUsecase) // v1: echo group
+	handler.NewHistoryHandler(v1, historyUsecase)
+	handler.NewMessageHandler(v1, messageUsecase)
+	handler.NewNotificationHandler(v1, notificationUsecase)
+	handler.NewWSHandler(v1, hub)
 
 	appPort := getEnv("PORT", "8080")
 	go func() {

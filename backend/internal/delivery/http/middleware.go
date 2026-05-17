@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -23,22 +24,11 @@ func AuthMiddleware() echo.MiddlewareFunc {
 				return respondError(c, http.StatusUnauthorized, "Geçersiz token formatı. Beklenen: Bearer <token>")
 			}
 
-			tokenString := parts[1]
-			secret := os.Getenv("JWT_SECRET")
-			if secret == "" {
-				return respondError(c, http.StatusInternalServerError, "Sunucu yapılandırma hatası: JWT_SECRET eksik")
+			claims, err := parseToken(parts[1])
+			if err != nil {
+				return respondError(c, http.StatusUnauthorized, err.Error())
 			}
 
-			token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-				return []byte(secret), nil
-			})
-
-			if err != nil || !token.Valid {
-				return respondError(c, http.StatusUnauthorized, "Geçersiz veya süresi dolmuş token")
-			}
-
-			// Token geçerliyse, içindeki verileri (claims) al ve Context'e yükle
-			claims, _ := token.Claims.(jwt.MapClaims)
 			c.Set("user_id", claims["user_id"])
 			c.Set("role", claims["role"])
 
@@ -65,4 +55,26 @@ func RBACMiddleware(allowedRoles ...string) echo.MiddlewareFunc {
 			return respondError(c, http.StatusForbidden, "Bu işlem için yetkiniz yok")
 		}
 	}
+}
+
+func parseToken(tokenString string) (jwt.MapClaims, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return nil, errors.New("sunucu yapılandırma hatası: JWT_SECRET eksik")
+	}
+
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		return []byte(secret), nil
+	})
+
+	if err != nil || !token.Valid {
+		return nil, errors.New("geçersiz veya süresi dolmuş token")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, errors.New("token claims okunamadı")
+	}
+
+	return claims, nil
 }

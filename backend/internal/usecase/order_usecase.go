@@ -3,16 +3,24 @@ package usecase
 import (
 	"context"
 	"drewisy/internal/domain"
+	"drewisy/internal/infrastructure/websocket"
 	"errors"
 )
 
 type orderUsecase struct {
-	orderRepo   domain.OrderRepository
-	productRepo domain.ProductRepository
+	orderRepo        domain.OrderRepository
+	productRepo      domain.ProductRepository
+	notificationRepo domain.NotificationRepository
+	hub              *websocket.Hub
 }
 
-func NewOrderUsecase(or domain.OrderRepository, pr domain.ProductRepository) domain.OrderUsecase {
-	return &orderUsecase{orderRepo: or, productRepo: pr}
+func NewOrderUsecase(or domain.OrderRepository, pr domain.ProductRepository, nr domain.NotificationRepository, hub *websocket.Hub) domain.OrderUsecase {
+	return &orderUsecase{
+		orderRepo:        or,
+		productRepo:      pr,
+		notificationRepo: nr,
+		hub:              hub,
+	}
 }
 
 func (u *orderUsecase) CreateOrder(ctx context.Context, customerID string, req *domain.CreateOrderRequest) (*domain.OrderResponse, error) {
@@ -67,7 +75,6 @@ func (u *orderUsecase) FetchSellerOrders(ctx context.Context, sellerID string) (
 
 // UpdateOrderStatus: Satıcının sipariş statüsünü günceller (Business Logic & Validation)
 func (u *orderUsecase) UpdateOrderStatus(ctx context.Context, sellerID string, orderID string, req *domain.UpdateOrderStatusRequest) error {
-	// 1. İş Kuralları (Business Rule) Validasyonu: Statü sadece belirli değerler alabilir
 	validStatuses := map[string]bool{
 		"pending":   true,
 		"shipped":   true,
@@ -79,6 +86,40 @@ func (u *orderUsecase) UpdateOrderStatus(ctx context.Context, sellerID string, o
 		return errors.New("geçersiz sipariş statüsü")
 	}
 
-	// 2. Repository'e yönlendir (Güvenlik IDOR kontrolü SQL tarafında yapılacak)
-	return u.orderRepo.UpdateStatus(ctx, orderID, req.Status, sellerID)
+	// Repo üzerinden güncellenen satırdan customer_id anında yakalanır
+	customerID, err := u.orderRepo.UpdateStatus(ctx, orderID, req.Status, sellerID)
+	if err != nil {
+		return err
+	}
+
+	// Müşteri için kalıcı bildirim kaydı oluşturulur
+	notification := &domain.Notification{
+		UserID:      customerID,
+		Type:        "ORDER_UPDATE",
+		ReferenceID: &orderID,
+		Title:       "Sipariş Durumunuz Güncellendi",
+		Body:        "Siparişinizin yeni durumu: " + req.Status,
+	}
+
+	if err := u.notificationRepo.Create(ctx, notification); err != nil {
+		return err
+	}
+
+	// Canlı akış için anlık WebSocket Event tetiklenir
+	wsResp := domain.NotificationResponse{
+		ID:          notification.ID,
+		Type:        notification.Type,
+		ReferenceID: notification.ReferenceID,
+		Title:       notification.Title,
+		Body:        notification.Body,
+		IsRead:      notification.IsRead,
+		CreatedAt:   notification.CreatedAt,
+	}
+
+	u.hub.SendToUser(customerID, domain.WSEvent{
+		Type:    "ORDER_UPDATE",
+		Payload: wsResp,
+	})
+
+	return nil
 }

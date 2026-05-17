@@ -68,7 +68,7 @@ type OrderRepository interface {
 	Create(ctx context.Context, order *Order, items []OrderItem) error
 
 	FetchBySellerId(ctx context.Context, sellerID string) ([]SellerOrderResponse, error)
-	UpdateStatus(ctx context.Context, orderID string, status string, sellerID string) error
+	UpdateStatus(ctx context.Context, orderID string, status string, sellerID string) (string, error)
 }
 
 // OrderUsecase Arayüzü Güncellemesi

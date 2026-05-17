@@ -88,7 +88,28 @@ CREATE TABLE user_view_history (
     CONSTRAINT unique_user_product_history UNIQUE(user_id, product_id)
 );
 
--- 8. HIZLANDIRICI İNDEKSLER
+-- 8. MESSAGES Tablosu (Birebir mesajlaşma için)
+CREATE TABLE messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    receiver_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 9. NOTIFICATIONS Tablosu (In-App bildirimler için)
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL CHECK (type IN ('NEW_MESSAGE', 'ORDER_UPDATE')),
+    reference_id UUID, -- Mesaj ID veya Sipariş ID
+    title VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- HIZLANDIRICI İNDEKSLER
 CREATE INDEX idx_orders_customer_id ON orders(customer_id);
 CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_store_id ON products(store_id);
@@ -98,3 +119,6 @@ CREATE INDEX idx_order_items_product_id ON order_items(product_id);
 CREATE INDEX idx_user_view_history_user_id ON user_view_history(user_id);
 CREATE INDEX idx_user_view_history_viewed_at ON user_view_history(viewed_at DESC);
 CREATE INDEX idx_product_images_product_id ON product_images(product_id);
+CREATE INDEX idx_messages_sender_receiver ON messages(sender_id, receiver_id);
+CREATE INDEX idx_notifications_user_unread ON notifications(user_id) WHERE is_read = FALSE;
+CREATE INDEX idx_notifications_created_at ON notifications(created_at DESC);
