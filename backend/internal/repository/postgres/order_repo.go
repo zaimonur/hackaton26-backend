@@ -29,6 +29,17 @@ type sellerOrderRow struct {
 	TotalPrice    float64   `db:"total_price"`
 }
 
+type customerOrderRow struct {
+	OrderID      string    `db:"order_id"`
+	TotalAmount  float64   `db:"total_amount"`
+	Status       string    `db:"status"`
+	CreatedAt    time.Time `db:"created_at"`
+	ProductTitle string    `db:"product_title"`
+	ProductImage string    `db:"product_image"`
+	Quantity     int       `db:"quantity"`
+	UnitPrice    float64   `db:"unit_price"`
+}
+
 func NewOrderRepository(db *sqlx.DB) domain.OrderRepository {
 	return &orderRepository{db}
 }
@@ -161,4 +172,58 @@ func (r *orderRepository) UpdateStatus(ctx context.Context, orderID string, stat
 	}
 
 	return customerID, nil
+}
+
+func (r *orderRepository) FetchByCustomerId(ctx context.Context, customerID string) ([]domain.CustomerOrderResponse, error) {
+	query := `
+		SELECT o.id AS order_id, o.total_amount, o.status, o.created_at,
+		       p.title AS product_title, p.image_path AS product_image, 
+		       oi.quantity, oi.unit_price
+		FROM orders o
+		JOIN order_items oi ON o.id = oi.order_id
+		JOIN products p ON oi.product_id = p.id
+		WHERE o.customer_id = $1
+		ORDER BY o.created_at DESC
+	`
+
+	var rows []customerOrderRow
+	if err := r.db.SelectContext(ctx, &rows, query, customerID); err != nil {
+		return nil, err
+	}
+
+	orderMap := make(map[string]*domain.CustomerOrderResponse)
+	var orderedIDs []string
+
+	for _, row := range rows {
+		if _, exists := orderMap[row.OrderID]; !exists {
+			orderMap[row.OrderID] = &domain.CustomerOrderResponse{
+				OrderID:     row.OrderID,
+				TotalAmount: row.TotalAmount,
+				Status:      row.Status,
+				CreatedAt:   row.CreatedAt,
+				Items:       []domain.CustomerOrderItem{},
+			}
+			orderedIDs = append(orderedIDs, row.OrderID)
+		}
+
+		item := domain.CustomerOrderItem{
+			ProductTitle: row.ProductTitle,
+			ProductImage: row.ProductImage,
+			Quantity:     row.Quantity,
+			UnitPrice:    row.UnitPrice,
+		}
+
+		orderMap[row.OrderID].Items = append(orderMap[row.OrderID].Items, item)
+	}
+
+	var result []domain.CustomerOrderResponse
+	for _, id := range orderedIDs {
+		result = append(result, *orderMap[id])
+	}
+
+	if result == nil {
+		result = []domain.CustomerOrderResponse{}
+	}
+
+	return result, nil
 }

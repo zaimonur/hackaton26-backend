@@ -59,6 +59,23 @@ type SellerOrderResponse struct {
 	Items         []SellerOrderItem `json:"items"`
 }
 
+// CustomerOrderItem: Müşteri sipariş detayında gösterilecek ürün DTO'su
+type CustomerOrderItem struct {
+	ProductTitle string  `json:"product_title"`
+	ProductImage string  `json:"product_image"`
+	Quantity     int     `json:"quantity"`
+	UnitPrice    float64 `json:"unit_price"`
+}
+
+// CustomerOrderResponse: Müşterinin kendi sipariş panelinde listelenecek ana DTO
+type CustomerOrderResponse struct {
+	OrderID     string              `json:"order_id"`
+	TotalAmount float64             `json:"total_amount"`
+	Status      string              `json:"status"`
+	CreatedAt   time.Time           `json:"created_at"`
+	Items       []CustomerOrderItem `json:"items"`
+}
+
 // UpdateOrderStatusRequest: Statü güncelleme payload'ı
 type UpdateOrderStatusRequest struct {
 	Status string `json:"status" validate:"required"`
@@ -69,6 +86,7 @@ type OrderRepository interface {
 	Create(ctx context.Context, order *Order, items []OrderItem) error
 
 	FetchBySellerId(ctx context.Context, sellerID string) ([]SellerOrderResponse, error)
+	FetchByCustomerId(ctx context.Context, customerID string) ([]CustomerOrderResponse, error)
 	UpdateStatus(ctx context.Context, orderID string, status string, sellerID string) (string, error)
 }
 
@@ -77,5 +95,6 @@ type OrderUsecase interface {
 	CreateOrder(ctx context.Context, customerID string, req *CreateOrderRequest) (*OrderResponse, error)
 
 	FetchSellerOrders(ctx context.Context, sellerID string) ([]SellerOrderResponse, error)
+	FetchCustomerOrders(ctx context.Context, customerID string) ([]CustomerOrderResponse, error)
 	UpdateOrderStatus(ctx context.Context, sellerID string, orderID string, req *UpdateOrderStatusRequest) error
 }

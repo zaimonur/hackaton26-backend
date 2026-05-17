@@ -20,6 +20,8 @@ func NewOrderHandler(e *echo.Group, u domain.OrderUsecase) {
 	// Satıcı (Seller) rotaları
 	e.GET("/seller/orders", handler.FetchSellerOrders, AuthMiddleware(), RBACMiddleware("seller"))
 	e.PATCH("/seller/orders/:id/status", handler.UpdateStatus, AuthMiddleware(), RBACMiddleware("seller"))
+
+	e.GET("/customer/orders", handler.FetchCustomerOrders, AuthMiddleware(), RBACMiddleware("customer"))
 }
 
 func (h *OrderHandler) Create(c echo.Context) error {
@@ -66,4 +68,15 @@ func (h *OrderHandler) UpdateStatus(c echo.Context) error {
 	}
 
 	return respondSuccess(c, http.StatusOK, "Sipariş statüsü başarıyla güncellendi")
+}
+
+func (h *OrderHandler) FetchCustomerOrders(c echo.Context) error {
+	customerID := c.Get("user_id").(string) // JWT Context'ten güvenli okuma
+
+	res, err := h.usecase.FetchCustomerOrders(c.Request().Context(), customerID)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "Siparişler getirilirken sunucu hatası oluştu")
+	}
+
+	return respondSuccess(c, http.StatusOK, res)
 }

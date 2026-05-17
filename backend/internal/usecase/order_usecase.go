@@ -123,3 +123,7 @@ func (u *orderUsecase) UpdateOrderStatus(ctx context.Context, sellerID string, o
 
 	return nil
 }
+
+func (u *orderUsecase) FetchCustomerOrders(ctx context.Context, customerID string) ([]domain.CustomerOrderResponse, error) {
+	return u.orderRepo.FetchByCustomerId(ctx, customerID)
+}
