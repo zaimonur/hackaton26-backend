@@ -104,7 +104,7 @@ func main() {
 	dashboardUsecase := usecase.NewDashboardUsecase(dashboardRepo, storeRepo, productRepo, reviewRepo, aiUsecase)
 
 	//Mesaj ve Bildirim Usecaseleri
-	messageUsecase := usecase.NewMessageUsecase(messageRepo, hub)
+	messageUsecase := usecase.NewMessageUsecase(messageRepo, notificationRepo, hub)
 	notificationUsecase := usecase.NewNotificationUsecase(notificationRepo)
 
 	// Routing

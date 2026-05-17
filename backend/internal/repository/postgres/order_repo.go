@@ -17,6 +17,7 @@ type orderRepository struct {
 // sellerOrderRow: SQL JOIN sonucunu maplemek için flat yapıdaki internal struct. Dışarı sızdırılmaz.
 type sellerOrderRow struct {
 	OrderID       string    `db:"order_id"`
+	CustomerID    string    `db:"customer_id"`
 	CustomerEmail string    `db:"customer_email"`
 	TotalAmount   float64   `db:"total_amount"`
 	Status        string    `db:"status"`
@@ -75,7 +76,7 @@ func (r *orderRepository) Create(ctx context.Context, order *domain.Order, items
 // FetchBySellerId: Flat SQL verisini çeker, Go tarafında OrderID bazlı (Nested) gruplar.
 func (r *orderRepository) FetchBySellerId(ctx context.Context, sellerID string) ([]domain.SellerOrderResponse, error) {
 	query := `
-		SELECT o.id AS order_id, u.email AS customer_email, o.total_amount, o.status, o.created_at,
+		SELECT o.id AS order_id, o.customer_id, u.email AS customer_email, o.total_amount, o.status, o.created_at,
 		       p.title AS product_title, p.image_path AS product_image, 
 		       oi.quantity, oi.unit_price, (oi.quantity * oi.unit_price) AS total_price
 		FROM orders o
@@ -100,6 +101,7 @@ func (r *orderRepository) FetchBySellerId(ctx context.Context, sellerID string) 
 		if _, exists := orderMap[row.OrderID]; !exists {
 			orderMap[row.OrderID] = &domain.SellerOrderResponse{
 				OrderID:       row.OrderID,
+				CustomerID:    row.CustomerID,
 				CustomerEmail: row.CustomerEmail,
 				TotalAmount:   row.TotalAmount,
 				Status:        row.Status,

@@ -51,6 +51,7 @@ type SellerOrderItem struct {
 // SellerOrderResponse: Satıcı panelinde listelenecek ana sipariş (DTO)
 type SellerOrderResponse struct {
 	OrderID       string            `json:"order_id"`
+	CustomerID    string            `json:"customer_id" db:"customer_id"`
 	CustomerEmail string            `json:"customer_email"`
 	TotalAmount   float64           `json:"total_amount"`
 	Status        string            `json:"status"`

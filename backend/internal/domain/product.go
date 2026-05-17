@@ -9,6 +9,7 @@ import (
 // Entity (Model)
 type Product struct {
 	ID               string     `db:"id"`
+	SellerID         string     `db:"seller_id"`
 	StoreID          string     `db:"store_id"`
 	StoreName        string     `db:"store_name"`
 	Title            string     `db:"title"`
@@ -43,6 +44,7 @@ type UpdateProductRequest struct {
 
 type ProductResponse struct {
 	ID          string   `json:"id"`
+	SellerID    string   `json:"seller_id"`
 	StoreID     string   `json:"store_id"`
 	StoreName   string   `json:"store_name"`
 	Title       string   `json:"title"`
@@ -56,6 +58,7 @@ type ProductResponse struct {
 
 type ProductDetailResponse struct {
 	ID               string           `json:"id"`
+	SellerID         string           `json:"seller_id"`
 	StoreID          string           `json:"store_id"`
 	StoreName        string           `json:"store_name"`
 	Title            string           `json:"title"`

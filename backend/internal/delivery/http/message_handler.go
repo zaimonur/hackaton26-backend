@@ -13,7 +13,11 @@ type MessageHandler struct {
 
 func NewMessageHandler(e *echo.Group, u domain.MessageUsecase) {
 	handler := &MessageHandler{usecase: u}
+
 	e.POST("/messages", handler.SendMessage, AuthMiddleware())
+
+	// DİKKAT: Spesifik rotalar (statik olanlar), dinamik parametreli rotalardan (:target_id) önce tanımlanmalıdır!
+	e.GET("/messages/inbox", handler.GetInbox, AuthMiddleware())
 	e.GET("/messages/history/:target_id", handler.GetChatHistory, AuthMiddleware())
 }
 
@@ -31,6 +35,17 @@ func (h *MessageHandler) SendMessage(c echo.Context) error {
 	}
 
 	return respondSuccess(c, http.StatusCreated, resp)
+}
+
+func (h *MessageHandler) GetInbox(c echo.Context) error {
+	userID := c.Get("user_id").(string)
+
+	resp, err := h.usecase.GetInbox(c.Request().Context(), userID)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "gelen kutusu verileri alınamadı")
+	}
+
+	return respondSuccess(c, http.StatusOK, resp)
 }
 
 func (h *MessageHandler) GetChatHistory(c echo.Context) error {

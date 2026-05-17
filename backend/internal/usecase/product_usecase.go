@@ -18,7 +18,6 @@ type productUsecase struct {
 	aiService  domain.AIService
 }
 
-// Yeni bağımlılıklar eklendi
 func NewProductUsecase(r domain.ProductRepository, sr domain.StoreRepository, s storage.FileStorage, rr domain.ReviewRepository, ai domain.AIService) domain.ProductUsecase {
 	return &productUsecase{repo: r, storeRepo: sr, storage: s, reviewRepo: rr, aiService: ai}
 }
@@ -48,7 +47,6 @@ func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string
 	var products []domain.Product
 	var err error
 
-	// Smart Search Routing (2 Kelime Kuralı)
 	if wordCount > 2 {
 		catalog, err := u.repo.GetAllForAI(ctx)
 		if err != nil {
@@ -66,7 +64,6 @@ func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string
 			return nil, errors.New("ai eşleşmeleri veritabanından çekilemedi")
 		}
 	} else {
-		// Normal ILIKE Fallback
 		products, err = u.repo.Fetch(ctx, category, searchQuery)
 		if err != nil {
 			return nil, err
@@ -111,6 +108,7 @@ func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain
 	}
 
 	product := domain.Product{
+		SellerID:    store.SellerID,
 		StoreID:     store.ID,
 		StoreName:   store.Name,
 		Title:       req.Title,
@@ -170,14 +168,12 @@ func (u *productUsecase) GetProductDetail(ctx context.Context, id string) (*doma
 		return nil, errors.New("ürün yorumları alınamadı")
 	}
 
-	// Güvenli Slicing (Bounds Checking)
 	limit := 3
 	if len(reviews) < 3 {
 		limit = len(reviews)
 	}
 	recentReviews := reviews[:limit]
 
-	// Nil Pointer Check (DB'den null gelebilecek AI alanları için)
 	aiSummary := ""
 	if product.AISummary != nil {
 		aiSummary = *product.AISummary
@@ -195,6 +191,7 @@ func (u *productUsecase) GetProductDetail(ctx context.Context, id string) (*doma
 
 	return &domain.ProductDetailResponse{
 		ID:               product.ID,
+		SellerID:         product.SellerID,
 		StoreID:          product.StoreID,
 		StoreName:        product.StoreName,
 		Title:            product.Title,
@@ -216,16 +213,13 @@ func (u *productUsecase) AskQuestion(ctx context.Context, productID string, req 
 		return nil, errors.New("soru boş olamaz")
 	}
 
-	// 1. Ürün bilgilerini çek
 	product, err := u.repo.GetByID(ctx, productID)
 	if err != nil {
 		return nil, errors.New("ürün bulunamadı")
 	}
 
-	// 2. KRİTİK EKSİK: Yorumları da çek (AI analiz edebilsin diye)
 	reviews, _ := u.reviewRepo.GetByProductID(ctx, productID)
 
-	// Yorumları bir metin haline getir (Sadece ilk 5 yorum yeterli bağlam sağlar)
 	reviewsContext := ""
 	for i, r := range reviews {
 		if i >= 5 {
@@ -237,7 +231,6 @@ func (u *productUsecase) AskQuestion(ctx context.Context, productID string, req 
 		reviewsContext = "Henüz yorum yapılmamış."
 	}
 
-	// 3. PROMPT GÜNCELLEMESİ: Kimlik ve Bağlam
 	prompt := fmt.Sprintf(`Sen bağımsız ve tarafsız bir e-ticaret alışveriş asistanısın. 
 Görevin, aşağıdaki bilgilere dayanarak müşteriye yardımcı olmaktır. 
 Lütfen "biz", "ürünümüz" gibi ifadeler yerine "bu ürün", "mağaza" gibi 3. şahıs ifadeleri kullan. 
@@ -273,6 +266,7 @@ func mapProductToResponse(p domain.Product) domain.ProductResponse {
 
 	return domain.ProductResponse{
 		ID:          p.ID,
+		SellerID:    p.SellerID,
 		StoreID:     p.StoreID,
 		StoreName:   p.StoreName,
 		Title:       p.Title,
@@ -286,7 +280,7 @@ func mapProductToResponse(p domain.Product) domain.ProductResponse {
 }
 
 func (u *productUsecase) GetBestsellers(ctx context.Context) ([]domain.ProductResponse, error) {
-	products, err := u.repo.GetBestsellers(ctx, 10) // LIMIT 10
+	products, err := u.repo.GetBestsellers(ctx, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +293,6 @@ func (u *productUsecase) GetBestsellers(ctx context.Context) ([]domain.ProductRe
 }
 
 func (u *productUsecase) GetCategories(ctx context.Context) ([]string, error) {
-	// DB yerine AI analizi için sabit liste dönülüyor
 	return []string{
 		"Giyim", "Elektronik", "Ev & Yaşam", "Kozmetik & Kişisel Bakım",
 		"Spor & Outdoor", "Kitap & Hobi", "Takı & Aksesuar", "Bitki & Çiçek",
@@ -321,14 +314,12 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 
 	var gallery []string
 
-	// 1. Eski resimleri JSON'dan parse et
 	if req.KeptImages != "" {
 		if err := json.Unmarshal([]byte(req.KeptImages), &gallery); err != nil {
 			return nil, errors.New("kept_images geçerli bir JSON array formatında olmalıdır")
 		}
 	}
 
-	// 2. Yeni resimleri Storage'a yükle ve galeriye ekle
 	for _, img := range req.Images {
 		path, err := u.storage.UploadImage(img, "products")
 		if err != nil {
@@ -337,14 +328,13 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 		gallery = append(gallery, path)
 	}
 
-	// 3. Sıfır resim kontrolü
 	if len(gallery) == 0 {
 		return nil, errors.New("ürünün en az bir görseli bulunmak zorundadır")
 	}
 
-	// 4. Product modelini bağla
 	product := domain.Product{
 		ID:          productID,
+		SellerID:    store.SellerID,
 		StoreID:     store.ID,
 		StoreName:   store.Name,
 		Title:       req.Title,
@@ -352,11 +342,10 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 		Price:       req.Price,
 		Stock:       req.Stock,
 		Category:    req.Category,
-		ImagePath:   gallery[0], // İlk resim her zaman kapak fotoğrafı
+		ImagePath:   gallery[0],
 		Gallery:     gallery,
 	}
 
-	// 5. Veritabanında Transaction'ı tetikle
 	if err := u.repo.UpdateFull(ctx, &product); err != nil {
 		return nil, err
 	}

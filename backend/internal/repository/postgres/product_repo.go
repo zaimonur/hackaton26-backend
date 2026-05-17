@@ -18,7 +18,7 @@ func NewProductRepository(db *sqlx.DB) domain.ProductRepository {
 }
 
 func (r *productRepository) Fetch(ctx context.Context, category, searchQuery string) ([]domain.Product, error) {
-	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
+	query := `SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
 			  WHERE 1=1`
@@ -51,7 +51,7 @@ func (r *productRepository) Fetch(ctx context.Context, category, searchQuery str
 }
 
 func (r *productRepository) FetchByStoreId(ctx context.Context, storeID string) ([]domain.Product, error) {
-	query := `SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
+	query := `SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
 			  WHERE p.store_id = $1 
@@ -61,7 +61,6 @@ func (r *productRepository) FetchByStoreId(ctx context.Context, storeID string) 
 		return nil, err
 	}
 
-	// DÜZELTME 2: N+1 Sorgu ile Galeri (Gallery) verilerinin doldurulması
 	imgQuery := `SELECT image_path FROM product_images WHERE product_id = $1 ORDER BY created_at ASC`
 	for i := range products {
 		var images []string
@@ -168,7 +167,7 @@ func (r *productRepository) Delete(ctx context.Context, id string, storeID strin
 func (r *productRepository) GetByID(ctx context.Context, id string) (*domain.Product, error) {
 	var p domain.Product
 	query := `
-    SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, 
+    SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, 
            p.category, p.image_path, p.ai_summary, p.ai_sentiment_score, p.ai_last_updated_at, 
            p.created_at, p.updated_at 
     FROM products p
@@ -226,12 +225,12 @@ func (r *productRepository) GetLowStockProducts(ctx context.Context, storeID str
 
 func (r *productRepository) GetBestsellers(ctx context.Context, limit int) ([]domain.Product, error) {
 	query := `
-		SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, 
+		SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, 
 		       p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 		FROM products p
 		JOIN stores s ON p.store_id = s.id
 		JOIN order_items oi ON p.id = oi.product_id
-		GROUP BY p.id, p.store_id, s.name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at
+		GROUP BY p.id, p.store_id, s.seller_id, s.name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at
 		ORDER BY SUM(oi.quantity) DESC
 		LIMIT $1
 	`
@@ -273,11 +272,11 @@ func (r *productRepository) GetAllForAI(ctx context.Context) ([]domain.ProductLi
 
 func (r *productRepository) GetByIDs(ctx context.Context, ids []string) ([]domain.Product, error) {
 	if len(ids) == 0 {
-		return []domain.Product{}, nil // Early return: Gereksiz SQL sorgusunu engeller
+		return []domain.Product{}, nil
 	}
 
 	query, args, err := sqlx.In(`
-		SELECT p.id, p.store_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
+		SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 		FROM products p 
 		JOIN stores s ON p.store_id = s.id 
 		WHERE p.id IN (?)
@@ -286,7 +285,7 @@ func (r *productRepository) GetByIDs(ctx context.Context, ids []string) ([]domai
 		return nil, err
 	}
 
-	query = r.db.Rebind(query) // PostgreSQL $1, $2 syntax binding
+	query = r.db.Rebind(query)
 
 	var products []domain.Product
 	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {
@@ -305,7 +304,6 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 		return err
 	}
 
-	// Panic ve Error anında güvenli Rollback mekanizması
 	defer func() {
 		if rec := recover(); rec != nil {
 			tx.Rollback()
@@ -317,7 +315,6 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 		}
 	}()
 
-	// 1. Ana ürün bilgilerini güncelle (IDOR koruması: Sadece ilgili satıcının mağazasına aitse günceller)
 	updateQuery := `
 		UPDATE products 
 		SET title = $1, description = $2, price = $3, stock = $4, category = $5, image_path = $6, updated_at = NOW()
@@ -336,13 +333,11 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 		return errors.New("ürün bulunamadı veya bu işlem için yetkiniz yok")
 	}
 
-	// 2. Eski galeriyi temizle
 	deleteImagesQuery := `DELETE FROM product_images WHERE product_id = $1`
 	if _, err = tx.ExecContext(ctx, deleteImagesQuery, p.ID); err != nil {
 		return errors.New("eski ürün görselleri silinemedi")
 	}
 
-	// 3. Yeni galeriyi yaz
 	if len(p.Gallery) > 0 {
 		insertImageQuery := `INSERT INTO product_images (product_id, image_path, created_at) VALUES ($1, $2, NOW())`
 		for _, imgPath := range p.Gallery {

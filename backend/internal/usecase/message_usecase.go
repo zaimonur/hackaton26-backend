@@ -7,14 +7,16 @@ import (
 )
 
 type messageUsecase struct {
-	messageRepo domain.MessageRepository
-	hub         *websocket.Hub
+	messageRepo      domain.MessageRepository
+	notificationRepo domain.NotificationRepository
+	hub              *websocket.Hub
 }
 
-func NewMessageUsecase(mr domain.MessageRepository, hub *websocket.Hub) domain.MessageUsecase {
+func NewMessageUsecase(mr domain.MessageRepository, nr domain.NotificationRepository, hub *websocket.Hub) domain.MessageUsecase {
 	return &messageUsecase{
-		messageRepo: mr,
-		hub:         hub,
+		messageRepo:      mr,
+		notificationRepo: nr,
+		hub:              hub,
 	}
 }
 
@@ -29,6 +31,16 @@ func (u *messageUsecase) SendMessage(ctx context.Context, senderID string, req *
 		return nil, err
 	}
 
+	// Alıcıya yeni mesaj bildirimi oluştur
+	notification := &domain.Notification{
+		UserID:      req.ReceiverID,
+		Type:        "NEW_MESSAGE",
+		ReferenceID: &msg.ID,
+		Title:       "Yeni Mesaj",
+		Body:        "Yeni bir mesajınız var.",
+	}
+	_ = u.notificationRepo.Create(ctx, notification) // Hata fırlatsa bile mesaj gönderimini kesmemek için ignore edilebilir
+
 	resp := &domain.MessageResponse{
 		ID:         msg.ID,
 		SenderID:   msg.SenderID,
@@ -37,7 +49,6 @@ func (u *messageUsecase) SendMessage(ctx context.Context, senderID string, req *
 		CreatedAt:  msg.CreatedAt,
 	}
 
-	// Anlık bildirim için WS Tetikleyici fırlatılıyor
 	event := domain.WSEvent{
 		Type:    "NEW_MESSAGE",
 		Payload: resp,
@@ -64,4 +75,8 @@ func (u *messageUsecase) GetChatHistory(ctx context.Context, currentUserID, targ
 		})
 	}
 	return resp, nil
+}
+
+func (u *messageUsecase) GetInbox(ctx context.Context, userID string) ([]domain.InboxItemResponse, error) {
+	return u.messageRepo.GetInbox(ctx, userID)
 }
