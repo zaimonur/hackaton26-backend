@@ -5,7 +5,6 @@ import (
 	"drewisy/internal/config"
 	"drewisy/internal/domain"
 	"drewisy/internal/infrastructure/storage"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -41,11 +40,15 @@ func (u *productUsecase) FetchBySeller(ctx context.Context, sellerID string) ([]
 	return res, nil
 }
 
-func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string, page, limit int) ([]domain.ProductResponse, error) {
-	params := domain.PaginationParams{Page: page, Limit: limit}
-	safeLimit, safeOffset := params.GetOffset()
+// Usecase: Offset/Page hesaplaması tamamen kaldırıldı. Keyset (Cursor) mantığına geçildi.
+func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string, limit int, cursorTime string) ([]domain.ProductResponse, error) {
+	// Güvenlik: İstemci limiti abartmasın diye makul bir üst sınır (Hard Limit) koyuyoruz
+	if limit <= 0 || limit > 50 {
+		limit = 20 // Default limitimiz 20 ürün
+	}
 
-	products, err := u.repo.Fetch(ctx, category, searchQuery, safeLimit, safeOffset)
+	// Doğrudan cursorTime'ı repoya iletiyoruz (O(1) hızında indeks taraması için)
+	products, err := u.repo.Fetch(ctx, category, searchQuery, limit, cursorTime)
 	if err != nil {
 		return nil, fmt.Errorf("katalog getirilemedi: %w", err)
 	}
@@ -70,16 +73,8 @@ func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain
 		return nil, errors.New("eksik veya hatalı ürün bilgisi")
 	}
 
-	var gallery []string
-	for _, img := range req.Images {
-		path, err := u.storage.UploadImage(img, "products")
-		if err != nil {
-			return nil, fmt.Errorf("görsel yükleme başarısız: %w", err)
-		}
-		gallery = append(gallery, path)
-	}
-
-	if len(gallery) == 0 {
+	// DEĞİŞEN KISIM: Upload döngüsü silindi, doğrudan frontend'den gelen URL'leri alıyoruz
+	if len(req.Images) == 0 {
 		return nil, errors.New("ürünün en az bir görseli bulunmak zorundadır")
 	}
 
@@ -92,14 +87,14 @@ func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain
 		Price:       req.Price,
 		Stock:       req.Stock,
 		Category:    req.Category,
-		ImagePath:   gallery[0],
-		Gallery:     gallery,
+		ImagePath:   req.Images[0], // İlk gelen URL kapak resmidir
+		Gallery:     req.Images,    // Hepsi galeri dizisi
 	}
 
 	embedText := fmt.Sprintf("Kategori: %s, Başlık: %s, Açıklama: %s", product.Category, product.Title, product.Description)
 	embedding, err := u.aiService.CreateEmbedding(ctx, embedText)
 	if err == nil {
-		product.Embedding = embedding // Sadece PGVector tablosunda olduğu varsayılarak saklandı
+		product.Embedding = embedding
 	} else {
 		fmt.Println("UYARI: RAG Vektör üretilemedi:", err)
 	}
@@ -259,18 +254,15 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 
 	var gallery []string
 
-	if req.KeptImages != "" {
-		if err := json.Unmarshal([]byte(req.KeptImages), &gallery); err != nil {
-			return nil, fmt.Errorf("kept_images geçerli bir JSON array formatında olmalıdır: %w", err)
-		}
+	// 1. Eskiden kalan S3 URL'lerini galeriye ekle
+	if len(req.KeptImages) > 0 {
+		gallery = append(gallery, req.KeptImages...)
 	}
 
-	for _, img := range req.Images {
-		path, err := u.storage.UploadImage(img, "products")
-		if err != nil {
-			return nil, fmt.Errorf("yeni görseller yüklenirken hata: %w", err)
-		}
-		gallery = append(gallery, path)
+	// 2. Yeni yüklenen (ve bize URL olarak gelen) resimleri galeriye ekle
+	// (u.storage.UploadImage çağrısı tamamen kaldırıldı çünkü dosya zaten bulutta!)
+	if len(req.Images) > 0 {
+		gallery = append(gallery, req.Images...)
 	}
 
 	if len(gallery) == 0 {
@@ -287,7 +279,7 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 		Price:       req.Price,
 		Stock:       req.Stock,
 		Category:    req.Category,
-		ImagePath:   gallery[0],
+		ImagePath:   gallery[0], // İlk resim her zaman vitrin görselidir
 		Gallery:     gallery,
 	}
 
@@ -323,4 +315,8 @@ func mapProductToResponse(p domain.Product) domain.ProductResponse {
 		ImagePath:   p.ImagePath,
 		Gallery:     p.Gallery,
 	}
+}
+
+func (u *productUsecase) GenerateUploadURL(ctx context.Context, filename string) (string, string, error) {
+	return u.storage.GeneratePresignedURL(ctx, "products", filename)
 }

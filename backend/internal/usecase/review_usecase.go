@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
-	"time"
 )
 
 type reviewUsecase struct {
@@ -30,15 +28,13 @@ func NewReviewUsecase(rr domain.ReviewRepository, ai domain.AIService, pr domain
 }
 
 func (u *reviewUsecase) CreateReview(ctx context.Context, customerID string, productID string, req *domain.CreateReviewRequest) error {
+	// 1. Müşteri bu ürünü gerçekten aldı ve teslim edildi mi?
 	isEligible, err := u.reviewRepo.CheckEligibility(ctx, customerID, productID)
-	if err != nil {
-		return err
+	if err != nil || !isEligible {
+		return errors.New("Yorum yapabilmek için ürünü satın almış ve teslim almış olmanız gerekmektedir.")
 	}
 
-	if !isEligible {
-		return errors.New("yorum yapabilmek için ürünü satın almış ve teslim almış olmanız gerekmektedir")
-	}
-
+	// 2. Yorumu veritabanına kaydet
 	review := &domain.Review{
 		ProductID: productID,
 		UserID:    customerID,
@@ -46,37 +42,15 @@ func (u *reviewUsecase) CreateReview(ctx context.Context, customerID string, pro
 		Comment:   req.Comment,
 	}
 
-	err = u.reviewRepo.Create(ctx, review)
-	if err != nil {
-		return err
+	if err := u.reviewRepo.Create(ctx, review); err != nil {
+		return errors.New("Yorum kaydedilemedi veya bu ürüne zaten yorum yaptınız")
 	}
 
-	//Async AI Worker Başlatılıyor (Graceful Shutdown destekli)
-	u.wg.Add(1)
-	go func(bgCtx context.Context, pID string) {
-		defer u.wg.Done()
-
-		// Arka plan işlemine 30 saniye süre veriyoruz
-		aiCtx, cancel := context.WithTimeout(bgCtx, 30*time.Second)
-		defer cancel()
-
-		err := u.SummarizeProductReviews(aiCtx, pID)
-		if err != nil {
-			log.Printf("AI Özetleme hatası (Ürün ID: %s): %v\n", pID, err)
-		}
-	}(context.Background(), productID)
-
+	// AI Özeti üretme işini buradan kopardık! Artık Gece Vardiyası (Worker) yapacak.
 	return nil
 }
 
 func (u *reviewUsecase) SummarizeProductReviews(ctx context.Context, productID string) error {
-	// 1. Ürün bilgilerini al
-	product, err := u.productRepo.GetByID(ctx, productID)
-	if err != nil {
-		return err
-	}
-
-	// 2. Ürüne ait yorumları al
 	reviews, err := u.reviewRepo.GetByProductID(ctx, productID)
 	if err != nil {
 		return err
@@ -86,31 +60,25 @@ func (u *reviewUsecase) SummarizeProductReviews(ctx context.Context, productID s
 		return nil
 	}
 
-	var reviewText strings.Builder
-	for i, r := range reviews {
-		if i > 50 { // Token israfını önlemek için son 50 yorumla sınırlandırıldı
-			break
-		}
-		reviewText.WriteString(fmt.Sprintf("- Puan: %d/5 | Yorum: %s\n", r.Rating, r.Comment))
+	var fullText strings.Builder
+	for _, r := range reviews {
+		fullText.WriteString(fmt.Sprintf("- %s\n", r.Comment))
 	}
 
-	// 3. AI Prompt'unu merkezi config'den alıp hazırla ()
-	prompt := fmt.Sprintf(config.ReviewSummaryPrompt, product.Description, reviewText.String())
+	// Gömülü string silindi, JSON üreten merkezi config bağlandı
+	prompt := fmt.Sprintf(config.ReviewSummaryJSONPrompt, fullText.String())
 
-	// 4. LLM'den yanıt al
 	aiResponse, err := u.aiService.GenerateText(ctx, prompt)
 	if err != nil {
 		return err
 	}
 
-	// 5. JSON Sanitize İşlemi
 	cleanJSON := strings.TrimSpace(aiResponse)
 	cleanJSON = strings.TrimPrefix(cleanJSON, "```json")
 	cleanJSON = strings.TrimPrefix(cleanJSON, "```")
 	cleanJSON = strings.TrimSuffix(cleanJSON, "```")
 	cleanJSON = strings.TrimSpace(cleanJSON)
 
-	// 6. JSON Parse
 	var aiData struct {
 		Summary string `json:"summary"`
 		Badge   string `json:"badge"`
@@ -119,8 +87,20 @@ func (u *reviewUsecase) SummarizeProductReviews(ctx context.Context, productID s
 		return fmt.Errorf("ai json parse hatası: %v | raw: %s", err, cleanJSON)
 	}
 
-	// 7. DB'yi Güncelle
-	return u.productRepo.UpdateAIInsights(ctx, productID, aiData.Summary, aiData.Badge)
+	product, err := u.productRepo.GetByID(ctx, productID)
+	if err != nil {
+		return fmt.Errorf("rag için ürün bilgileri çekilemedi: %v", err)
+	}
+
+	richText := fmt.Sprintf("Kategori: %s, Başlık: %s, Açıklama: %s, Müşteri Deneyimi ve AI Özeti: %s",
+		product.Category, product.Title, product.Description, aiData.Summary)
+
+	newEmbedding, err := u.aiService.CreateEmbedding(ctx, richText)
+	if err != nil {
+		return fmt.Errorf("rag vektörü üretilemedi: %v", err)
+	}
+
+	return u.productRepo.UpdateAIInsights(ctx, productID, aiData.Summary, aiData.Badge, newEmbedding)
 }
 
 // Interface'e uygun hale getirildi ve eksik veriler repodan çekildi.

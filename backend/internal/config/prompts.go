@@ -16,17 +16,9 @@ Fiyat: %.2f TL
 Açıklama: %s
 Müşteri Sorusu: %s`
 
-	// --- Review Usecase Promptları ---
-	ReviewSummaryPrompt = `Sen bir e-ticaret asistanısın. Görevin, aşağıdaki ürün bilgilerini ve müşteri yorumlarını analiz ederek kısa ve vurucu bir özet çıkarmak. Ayrıca genel müşteri hissiyatına göre "Harika", "İyi", "Ortalama", "Kötü" gibi bir rozet/sentiment skoru üret.
+	// AI Usecase (Batch Job) için düz metin üreten prompt
+	ReviewSummaryPrompt = `Aşağıdaki müşteri yorumlarını analiz et ve bu ürünün artı/eksi yönlerini vurgulayan 2-3 cümlelik çok kısa ve etkileyici bir özet oluştur:\n\n%s`
 
-ÜRÜN:
-%s
-
-YORUMLAR:
-%s
-
-ÇIKTI KURALI:
-- Asla Markdown bloğu ("""json) KULLANMA.
-- Sadece raw JSON dön.
-- JSON formatı şu şekilde olmalı: {"summary": "harika ürün 🚀", "badge": "%%95 Memnuniyet"}`
+	// Review Usecase (On-Demand) için yapılandırılmış katı JSON üreten prompt
+	ReviewSummaryJSONPrompt = `Aşağıdaki müşteri yorumlarını analiz et ve bu ürünün artı/eksi yönlerini vurgulayan 2-3 cümlelik çok kısa ve etkileyici bir özet oluştur. Ayrıca ürün için genel bir duygu durumu (badge) belirle. Çıktı KESİNLİKLE şu JSON formatında olmalı ve Markdown kod blokları içermemelidir: {"summary": "ürün özeti", "badge": "olumlu/nötr/olumsuz"}\n\n%s`
 )

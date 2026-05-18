@@ -15,7 +15,9 @@ import (
 	"drewisy/internal/infrastructure/storage"
 	"drewisy/internal/infrastructure/websocket"
 	"drewisy/internal/repository/postgres"
+	"drewisy/internal/repository/redis"
 	"drewisy/internal/usecase"
+	"drewisy/internal/worker"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
@@ -47,6 +49,12 @@ func main() {
 	pass := getEnv("DB_PASSWORD", "secret")
 	dbName := getEnv("DB_NAME", "drewisy")
 	ssl := getEnv("DB_SSLMODE", "disable")
+
+	redisHost := getEnv("REDIS_HOST", "localhost")
+	redisPort := getEnv("REDIS_PORT", "6379")
+
+	// Redis Cache Repo Başlatılıyor
+	cacheRepo := redis.NewRedisCacheRepository(redisHost + ":" + redisPort)
 
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		host, dbPort, user, pass, dbName, ssl,
@@ -92,7 +100,7 @@ func main() {
 		log.Println("📁 Depolama Katmanı: Yerel Disk (LocalStorage) aktif.")
 	}
 
-	// Arka plan AI işlemlerini izleyecek sistem bekçisi (WaitGroup)
+	// Arka plan işlemlerini izleyecek sistem bekçisi (WaitGroup)
 	var wg sync.WaitGroup
 
 	// Repolar
@@ -120,12 +128,11 @@ func main() {
 
 	productUsecase := usecase.NewProductUsecase(productRepo, storeRepo, fileStorage, reviewRepo, aiService)
 
-	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo, notificationRepo, hub)
+	orderUsecase := usecase.NewOrderUsecase(orderRepo, productRepo, notificationRepo, cacheRepo, hub)
 
-	// wg bekçisini reviewUsecase'e enjekte ettik
 	reviewUsecase := usecase.NewReviewUsecase(reviewRepo, aiService, productRepo, &wg)
 
-	aiUsecase := usecase.NewAIUsecase(aiService, productRepo, reviewRepo, historyRepo)
+	aiUsecase := usecase.NewAIUsecase(aiService, productRepo, reviewRepo, historyRepo, cacheRepo)
 
 	dashboardUsecase := usecase.NewDashboardUsecase(dashboardRepo, storeRepo, productRepo, reviewRepo, aiUsecase)
 
@@ -149,6 +156,16 @@ func main() {
 	handler.NewNotificationHandler(v1, notificationUsecase)
 	handler.NewWSHandler(v1, hub)
 
+	// Arka Plan İşçilerini (Workers) Başlat <---
+	log.Println("Arka plan işçileri ayağa kaldırılıyor...")
+
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	defer cancelWorkers()
+
+	// BURADAKİ context.Background()'ları workerCtx ile değiştirdik!
+	worker.StartAIBatchProcessor(context.Background(), aiUsecase, aiService, productRepo)
+	worker.StartOrderProcessor(workerCtx, cacheRepo, orderRepo)
+
 	appPort := getEnv("PORT", "8080")
 	go func() {
 		if err := e.Start(":" + appPort); err != nil && err != http.ErrServerClosed {
@@ -171,7 +188,7 @@ func main() {
 	}
 
 	// Arka plan işlemlerinin bitmesini bekle
-	log.Println("Arka plandaki AI işlemlerinin (goroutines) bitmesi bekleniyor...")
+	log.Println("Arka plandaki işlemlerinin (goroutines) bitmesi bekleniyor...")
 	waitCh := make(chan struct{})
 	go func() {
 		wg.Wait() // Tüm sayaçlar 0 olana kadar engeller

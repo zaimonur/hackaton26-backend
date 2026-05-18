@@ -92,11 +92,11 @@ func (h *ProductHandler) FetchProducts(c echo.Context) error {
 	searchQuery := c.QueryParam("q")
 
 	// Query'den string olarak gelen page ve limit değerlerini Integer'a çeviriyoruz
-	page, _ := strconv.Atoi(c.QueryParam("page"))
+	cursorTime := c.QueryParam("cursor")
 	limit, _ := strconv.Atoi(c.QueryParam("limit"))
 
 	// Usecase'e iletiyoruz. (0 gelse bile GetOffset fonksiyonumuz onu 1 ve 20'ye yuvarlayacak)
-	products, err := h.usecase.Fetch(c.Request().Context(), category, searchQuery, page, limit)
+	products, err := h.usecase.Fetch(c.Request().Context(), category, searchQuery, limit, cursorTime)
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, err.Error())
 	}
@@ -106,36 +106,20 @@ func (h *ProductHandler) FetchProducts(c echo.Context) error {
 }
 
 func (h *ProductHandler) Store(c echo.Context) error {
-	form, err := c.MultipartForm()
-	if err != nil {
-		return respondError(c, http.StatusBadRequest, "Form verisi okunamadı")
+	sellerID := c.Get("user_id").(string) // Auth middleware'den geldiğini varsayıyoruz
+
+	var req domain.CreateProductRequest
+	// c.Bind doğrudan JSON payload'ı okur
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "geçersiz JSON formatı"})
 	}
-
-	price, _ := strconv.ParseFloat(c.FormValue("price"), 64)
-	stock, _ := strconv.Atoi(c.FormValue("stock"))
-
-	files := form.File["images"]
-	if len(files) == 0 {
-		return respondError(c, http.StatusBadRequest, "En az bir ürün görseli eklenmelidir")
-	}
-
-	req := domain.CreateProductRequest{
-		Title:       c.FormValue("title"),
-		Description: c.FormValue("description"),
-		Category:    c.FormValue("category"),
-		Price:       price,
-		Stock:       stock,
-		Images:      files,
-	}
-
-	sellerID := c.Get("user_id").(string)
 
 	res, err := h.usecase.Store(c.Request().Context(), sellerID, &req)
 	if err != nil {
-		return respondError(c, http.StatusBadRequest, err.Error())
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	return respondSuccess(c, http.StatusCreated, res)
+	return c.JSON(http.StatusCreated, res)
 }
 
 func (h *ProductHandler) UpdatePriceAndStock(c echo.Context) error {
@@ -187,22 +171,11 @@ func (h *ProductHandler) UpdateProductFull(c echo.Context) error {
 	productID := c.Param("id")
 	sellerID := c.Get("user_id").(string)
 
-	form, err := c.MultipartForm()
-	if err != nil {
-		return respondError(c, http.StatusBadRequest, "Form verisi okunamadı")
-	}
+	var req domain.UpdateProductFullRequest
 
-	price, _ := strconv.ParseFloat(c.FormValue("price"), 64)
-	stock, _ := strconv.Atoi(c.FormValue("stock"))
-
-	req := domain.UpdateProductFullRequest{
-		Title:       c.FormValue("title"),
-		Description: c.FormValue("description"),
-		Category:    c.FormValue("category"),
-		Price:       price,
-		Stock:       stock,
-		KeptImages:  c.FormValue("kept_images"),
-		Images:      form.File["images"],
+	// ARTIK c.MultipartForm() YOK. Sadece c.Bind() ile hafif JSON'u okuyoruz.
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "Geçersiz JSON formatı")
 	}
 
 	res, err := h.usecase.UpdateFull(c.Request().Context(), sellerID, productID, &req)
@@ -211,4 +184,21 @@ func (h *ProductHandler) UpdateProductFull(c echo.Context) error {
 	}
 
 	return respondSuccess(c, http.StatusOK, res)
+}
+
+func (h *ProductHandler) GetUploadURL(c echo.Context) error {
+	filename := c.QueryParam("filename")
+	if filename == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "filename parametresi zorunludur"})
+	}
+
+	uploadURL, finalURL, err := h.usecase.GenerateUploadURL(c.Request().Context(), filename)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"upload_url": uploadURL, // Frontend dosyayı buraya PUT edecek
+		"final_url":  finalURL,  // Frontend ürün eklerken (Store) bu URL'i JSON içinde gönderecek
+	})
 }

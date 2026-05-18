@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -29,7 +30,6 @@ func (s *LocalStorage) UploadImage(fileHeader *multipart.FileHeader, folder stri
 	}
 	defer file.Close()
 
-	// 1. Güvenlik: MIME Tipini kontrol et (Sadece uzantıya güvenmiyoruz, ilk 512 byte'ı okuyoruz)
 	buffer := make([]byte, 512)
 	if _, err := file.Read(buffer); err != nil && err != io.EOF {
 		return "", errors.New("dosya içeriği okunamadı")
@@ -40,24 +40,20 @@ func (s *LocalStorage) UploadImage(fileHeader *multipart.FileHeader, folder stri
 		return "", errors.New("güvenlik ihlali: yüklenen dosya geçerli bir görsel değil")
 	}
 
-	// 2. İmleci başa al (512 byte okuduğumuz için)
 	file.Seek(0, io.SeekStart)
 
-	// 3. Güvenlik: Rastgele dosya ismi üret (Directory Traversal ve çakışma koruması)
 	ext := filepath.Ext(fileHeader.Filename)
 	if ext == "" {
-		ext = ".png" // Fallback
+		ext = ".png"
 	}
 
 	randomBytes := make([]byte, 16)
 	rand.Read(randomBytes)
 	secureFileName := hex.EncodeToString(randomBytes) + ext
 
-	// 4. Hedef klasör (Örn: uploads/products)
 	targetDir := filepath.Join(s.BaseDir, folder)
 	targetPath := filepath.Join(targetDir, secureFileName)
 
-	// 5. Dosyayı diske yaz
 	dst, err := os.Create(targetPath)
 	if err != nil {
 		return "", errors.New("sunucu hatası: görsel diske yazılamadı")
@@ -68,6 +64,12 @@ func (s *LocalStorage) UploadImage(fileHeader *multipart.FileHeader, folder stri
 		return "", errors.New("sunucu hatası: görsel kopyalanamadı")
 	}
 
-	// 6. DB'ye yazılacak URL formatını dön
 	return fmt.Sprintf("/static/%s/%s", folder, secureFileName), nil
+}
+
+// YENİ EKLENEN METOT: Interface zorunluluğu
+func (s *LocalStorage) GeneratePresignedURL(ctx context.Context, folder string, filename string) (string, string, error) {
+	// Pre-signed URL mimarisi sadece S3, MinIO, GCS gibi bulut tabanlı depolamalarda çalışır.
+	// Geliştirme ortamında bu fonksiyona düşülürse developer'ı uyarıyoruz.
+	return "", "", errors.New("Lokal depolama (local_storage) Pre-signed URL mimarisini desteklemez. Lütfen .env dosyasında USE_S3=true yapın")
 }

@@ -2,7 +2,6 @@ package domain
 
 import (
 	"context"
-	"mime/multipart"
 	"time"
 )
 
@@ -30,12 +29,12 @@ type Product struct {
 // --- DTOs ---
 
 type CreateProductRequest struct {
-	Title       string                  `form:"title"`
-	Description string                  `form:"description"`
-	Price       float64                 `form:"price"`
-	Stock       int                     `form:"stock"`
-	Category    string                  `form:"category"`
-	Images      []*multipart.FileHeader `json:"-" form:"images"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Price       float64  `json:"price"`
+	Stock       int      `json:"stock"`
+	Category    string   `json:"category"`
+	Images      []string `json:"images"`
 }
 
 type UpdateProductRequest struct {
@@ -90,36 +89,36 @@ type ProductLightweight struct {
 }
 
 type UpdateProductFullRequest struct {
-	Title       string                  `form:"title"`
-	Description string                  `form:"description"`
-	Price       float64                 `form:"price"`
-	Stock       int                     `form:"stock"`
-	Category    string                  `form:"category"`
-	KeptImages  string                  `form:"kept_images"` // JSON string olarak gelecek
-	Images      []*multipart.FileHeader `json:"-" form:"images"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Price       float64  `json:"price"`
+	Stock       int      `json:"stock"`
+	Category    string   `json:"category"`
+	Images      []string `json:"images"`
+	KeptImages  []string `json:"kept_images"`
 }
 
 // --- Interfaces ---
 
 type ProductRepository interface {
-	Fetch(ctx context.Context, category string, searchQuery string, limit int, offset int) ([]Product, error)
+	Fetch(ctx context.Context, category, searchQuery string, limit int, cursorTime string) ([]Product, error)
 	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error)
 	GetByID(ctx context.Context, id string) (*Product, error)
 	Store(ctx context.Context, p *Product) error
 	UpdatePriceAndStock(ctx context.Context, productID string, storeID string, price float64, stock int) error
 	Delete(ctx context.Context, id string, storeID string) error
 	GetLowStockProducts(ctx context.Context, storeID string, limit int) ([]Product, error)
-	UpdateAIInsights(ctx context.Context, productID string, summary string, sentiment string) error
+	UpdateAIInsights(ctx context.Context, productID string, summary string, badge string, embedding []float32) error
 	GetBestsellers(ctx context.Context, limit int) ([]Product, error)
 	GetCategories(ctx context.Context) ([]string, error)
 	GetAllForAI(ctx context.Context) ([]ProductLightweight, error)
 	GetByIDs(ctx context.Context, ids []string) ([]Product, error)
 	UpdateFull(ctx context.Context, p *Product) error
-	SearchBySimilarity(ctx context.Context, embedding []float32, limit int) ([]Product, error)
+	SearchBySimilarity(ctx context.Context, embedding []float32, limit int, maxPrice float64, inStock bool) ([]Product, error)
 }
 
 type ProductUsecase interface {
-	Fetch(ctx context.Context, category string, searchQuery string, page int, limit int) ([]ProductResponse, error)
+	Fetch(ctx context.Context, category, searchQuery string, limit int, cursorTime string) ([]ProductResponse, error)
 	FetchBySeller(ctx context.Context, sellerID string) ([]ProductResponse, error)
 	Store(ctx context.Context, sellerID string, req *CreateProductRequest) (*ProductResponse, error)
 	UpdatePriceAndStock(ctx context.Context, sellerID string, productID string, req *UpdateProductRequest) (*ProductResponse, error)
@@ -129,4 +128,5 @@ type ProductUsecase interface {
 	GetBestsellers(ctx context.Context) ([]ProductResponse, error)
 	GetCategories(ctx context.Context) ([]string, error)
 	UpdateFull(ctx context.Context, sellerID string, productID string, req *UpdateProductFullRequest) (*ProductResponse, error)
+	GenerateUploadURL(ctx context.Context, filename string) (string, string, error)
 }

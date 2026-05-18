@@ -2,11 +2,9 @@ package http
 
 import (
 	"drewisy/internal/infrastructure/websocket"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	gorillaws "github.com/gorilla/websocket"
@@ -27,55 +25,34 @@ type WSHandler struct {
 
 func NewWSHandler(e *echo.Group, hub *websocket.Hub) {
 	handler := &WSHandler{hub: hub}
+	// Endpoint artık query param bekliyor: /ws?token=<JWT>
 	e.GET("/ws", handler.HandleWS)
 }
 
 func (h *WSHandler) HandleWS(c echo.Context) error {
-	// 1. URL'de token kontrolü YOK. Doğrudan bağlantıyı HTTP'den WebSocket'e yükseltiyoruz.
-	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	// 1. PRE-UPGRADE AUTHENTICATION (Bağlantı yükseltilmeden önce kontrol)
+	tokenString := c.QueryParam("token")
+	if tokenString == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Token eksik"})
+	}
+
+	claims, err := parseWSToken(tokenString, os.Getenv("JWT_SECRET"))
 	if err != nil {
-		return err
-	}
-
-	// 2. Güvenlik: İstemciye kimliğini kanıtlaması (Auth Frame) için 5 saniye süre veriyoruz.
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	// 3. İlk mesajı oku
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		conn.Close()
-		return nil
-	}
-
-	// 4. Gelen ilk mesajın "auth" tipinde ve token içerip içermediğini kontrol et
-	var authReq struct {
-		Type  string `json:"type"`
-		Token string `json:"token"`
-	}
-
-	if err := json.Unmarshal(msg, &authReq); err != nil || authReq.Type != "auth" || authReq.Token == "" {
-		conn.WriteMessage(gorillaws.TextMessage, []byte(`{"error": "unauthorized: auth frame bekleniyor"}`))
-		conn.Close()
-		return nil
-	}
-
-	// 5. Token'ı doğrula
-	claims, err := parseWSToken(authReq.Token, os.Getenv("JWT_SECRET"))
-	if err != nil {
-		conn.WriteMessage(gorillaws.TextMessage, []byte(`{"error": "unauthorized: geçersiz token"}`))
-		conn.Close()
-		return nil
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Geçersiz veya süresi dolmuş token"})
 	}
 
 	userID, ok := claims["user_id"].(string)
 	if !ok || userID == "" {
-		conn.WriteMessage(gorillaws.TextMessage, []byte(`{"error": "unauthorized: geçersiz kimlik"}`))
-		conn.Close()
-		return nil
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Geçersiz kimlik bilgisi"})
 	}
 
-	// 6. Kimlik doğrulama başarılı! Zaman aşımını (timeout) kaldır ve Hub'a kaydet
-	conn.SetReadDeadline(time.Time{})
+	// 2. KİMLİK DOĞRULANDI -> Bağlantıyı HTTP'den WebSocket'e güvenle yükselt
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err // Yükseltme hatası
+	}
+
+	// 3. İstemciyi doğrudan Hub'a kaydet (Zaman aşımı / bekleme süresi riskleri yok edildi)
 	client := &websocket.Client{
 		Hub:    h.hub,
 		Conn:   conn,
@@ -85,7 +62,7 @@ func (h *WSHandler) HandleWS(c echo.Context) error {
 
 	client.Hub.Register(client)
 
-	// Dinleme ve yazma döngülerini başlat
+	// Dinleme ve yazma döngülerini asenkron başlat
 	go client.WritePump()
 	go client.ReadPump()
 

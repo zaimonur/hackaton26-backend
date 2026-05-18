@@ -11,14 +11,16 @@ type orderUsecase struct {
 	orderRepo        domain.OrderRepository
 	productRepo      domain.ProductRepository
 	notificationRepo domain.NotificationRepository
+	cacheRepo        domain.CacheRepository
 	hub              *websocket.Hub
 }
 
-func NewOrderUsecase(or domain.OrderRepository, pr domain.ProductRepository, nr domain.NotificationRepository, hub *websocket.Hub) domain.OrderUsecase {
+func NewOrderUsecase(or domain.OrderRepository, pr domain.ProductRepository, nr domain.NotificationRepository, cr domain.CacheRepository, hub *websocket.Hub) domain.OrderUsecase {
 	return &orderUsecase{
 		orderRepo:        or,
 		productRepo:      pr,
 		notificationRepo: nr,
+		cacheRepo:        cr,
 		hub:              hub,
 	}
 }
@@ -36,36 +38,66 @@ func (u *orderUsecase) CreateOrder(ctx context.Context, customerID string, req *
 			return nil, errors.New("ürün adedi 0'dan büyük olmalıdır")
 		}
 
-		// Güvenlik: Fiyatı DB'den çekiyoruz
-		product, err := u.productRepo.GetByID(ctx, item.ProductID)
+		// 1. STOK REZERVASYONU (REDIS)
+		status, err := u.cacheRepo.DecrementStock(ctx, item.ProductID, item.Quantity)
 		if err != nil {
-			return nil, errors.New("ürün bulunamadı veya geçersiz")
+			return nil, errors.New("stok kontrolü sırasında bir hata oluştu")
 		}
 
+		// Cache Miss: Redis'te stok verisi henüz yoksa DB'den çekip Redis'e yükle ve tekrar dene
+		if status == -1 {
+			product, err := u.productRepo.GetByID(ctx, item.ProductID)
+			if err != nil {
+				return nil, errors.New("ürün bulunamadı")
+			}
+			// DB'deki stoğu Redis'e yaz (Lazy Loading)
+			u.cacheRepo.Set(ctx, "product:stock:"+product.ID, product.Stock, 0) // 0 = Kalıcı
+
+			// Tekrar düşmeyi dene
+			status, _ = u.cacheRepo.DecrementStock(ctx, item.ProductID, item.Quantity)
+		}
+
+		if status == 0 {
+			return nil, errors.New("üzgünüz, bu ürünün stoğu tükendi veya yetersiz")
+		}
+
+		// Stok ayrıldı, fiyatı DB'den güvenli şekilde çekelim (Fiyat bilgisini de ileride Redis'e alabilirsin)
+		product, _ := u.productRepo.GetByID(ctx, item.ProductID)
 		totalAmount += product.Price * float64(item.Quantity)
 
 		orderItems = append(orderItems, domain.OrderItem{
 			ProductID: product.ID,
 			Quantity:  item.Quantity,
-			UnitPrice: product.Price, // Güvenli fiyat kaydı
+			UnitPrice: product.Price,
 		})
 	}
 
 	order := &domain.Order{
 		CustomerID:  customerID,
 		TotalAmount: totalAmount,
-		Status:      "pending",
+		Status:      "pending", // Önce pending, DB'ye yazılınca onaylanacak
 	}
 
-	//  Transaction zırhına sahip repository metodunu çağırıyoruz
-	if err := u.orderRepo.CreateOrderTx(ctx, order, orderItems); err != nil {
-		return nil, err
+	// 2. SİPARİŞİ KUYRUĞA GÖNDER (Asenkron İşlem Paketi)
+	type OrderPayload struct {
+		Order domain.Order       `json:"order"`
+		Items []domain.OrderItem `json:"items"`
 	}
 
+	payload := OrderPayload{Order: *order, Items: orderItems}
+
+	err := u.cacheRepo.PublishToQueue(ctx, "order_queue", payload)
+	if err != nil {
+		// Kuyruğa yazılamazsa, alınan stokları iade eden bir telafi (compensation) mekanizması eklenmeli.
+		// Hackathon için şimdilik doğrudan hata fırlatıyoruz.
+		return nil, errors.New("sipariş alınamadı, lütfen tekrar deneyin")
+	}
+
+	// 3. MÜŞTERİYE ANINDA YANIT DÖN
 	return &domain.OrderResponse{
-		OrderID:     order.ID,
-		TotalAmount: order.TotalAmount,
-		Status:      order.Status,
+		OrderID:     "İşleniyor...", // DB ID'si henüz oluşmadı
+		TotalAmount: totalAmount,
+		Status:      "processing", // Müşteriye işleniyor diyoruz
 	}, nil
 }
 

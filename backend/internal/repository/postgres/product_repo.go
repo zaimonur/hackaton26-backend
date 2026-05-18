@@ -18,7 +18,8 @@ func NewProductRepository(db *sqlx.DB) domain.ProductRepository {
 	return &productRepository{db}
 }
 
-func (r *productRepository) Fetch(ctx context.Context, category, searchQuery string, limit, offset int) ([]domain.Product, error) {
+func (r *productRepository) Fetch(ctx context.Context, category, searchQuery string, limit int, cursorTime string) ([]domain.Product, error) {
+	// Temel sorgumuz (OFFSET YOK)
 	query := `SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
@@ -27,6 +28,15 @@ func (r *productRepository) Fetch(ctx context.Context, category, searchQuery str
 	var args []interface{}
 	argId := 1
 
+	// 1. Keyset Pagination (Cursor) Kontrolü
+	// Müşterinin gördüğü en son ürünün tarihinden daha "eski" olanları getir
+	if cursorTime != "" {
+		query += fmt.Sprintf(` AND p.created_at < $%d`, argId)
+		args = append(args, cursorTime)
+		argId++
+	}
+
+	// 2. Diğer Filtreler
 	if category != "" {
 		query += fmt.Sprintf(` AND p.category = $%d`, argId)
 		args = append(args, category)
@@ -39,14 +49,15 @@ func (r *productRepository) Fetch(ctx context.Context, category, searchQuery str
 		argId++
 	}
 
-	//  LIMIT ve OFFSET değişkenlerini güvenli bir şekilde sorguya enjekte ediyoruz.
-	query += fmt.Sprintf(` ORDER BY p.created_at DESC LIMIT $%d OFFSET $%d`, argId, argId+1)
-	args = append(args, limit, offset)
+	// 3. Sıralama ve Limit
+	query += fmt.Sprintf(` ORDER BY p.created_at DESC LIMIT $%d`, argId)
+	args = append(args, limit)
 
 	var products []domain.Product
 	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {
 		return nil, err
 	}
+
 	if products == nil {
 		products = []domain.Product{}
 	}
@@ -54,32 +65,58 @@ func (r *productRepository) Fetch(ctx context.Context, category, searchQuery str
 }
 
 func (r *productRepository) FetchByStoreId(ctx context.Context, storeID string) ([]domain.Product, error) {
+	// 1. Tüm ürünleri tek sorguda çek
 	query := `SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
 			  WHERE p.store_id = $1 
 			  ORDER BY p.created_at DESC`
+
 	var products []domain.Product
 	if err := r.db.SelectContext(ctx, &products, query, storeID); err != nil {
 		return nil, err
 	}
 
-	imgQuery := `SELECT image_path FROM product_images WHERE product_id = $1 ORDER BY created_at ASC`
-	for i := range products {
-		var images []string
-		err := r.db.SelectContext(ctx, &images, imgQuery, products[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		if images == nil {
-			images = []string{}
-		}
-		products[i].Gallery = images
+	if len(products) == 0 {
+		return []domain.Product{}, nil
 	}
 
-	if products == nil {
-		products = []domain.Product{}
+	// 2. Ürün ID'lerini topla
+	productIDs := make([]string, 0, len(products))
+	for _, p := range products {
+		productIDs = append(productIDs, p.ID)
 	}
+
+	// 3. Tüm görselleri TEK BİR SORGUDA (IN clause) çek
+	imgQuery, args, err := sqlx.In(`SELECT product_id, image_path FROM product_images WHERE product_id IN (?) ORDER BY created_at ASC`, productIDs)
+	if err != nil {
+		return nil, err
+	}
+	imgQuery = r.db.Rebind(imgQuery)
+
+	type ProductImage struct {
+		ProductID string `db:"product_id"`
+		ImagePath string `db:"image_path"`
+	}
+	var allImages []ProductImage
+	if err := r.db.SelectContext(ctx, &allImages, imgQuery, args...); err != nil {
+		return nil, err
+	}
+
+	// 4. Go tarafında bellekte (In-Memory) Map'le eşleştir
+	imageMap := make(map[string][]string)
+	for _, img := range allImages {
+		imageMap[img.ProductID] = append(imageMap[img.ProductID], img.ImagePath)
+	}
+
+	for i := range products {
+		if imgs, ok := imageMap[products[i].ID]; ok {
+			products[i].Gallery = imgs
+		} else {
+			products[i].Gallery = []string{}
+		}
+	}
+
 	return products, nil
 }
 
@@ -197,13 +234,11 @@ func (r *productRepository) GetByID(ctx context.Context, id string) (*domain.Pro
 	return &p, nil
 }
 
-func (r *productRepository) UpdateAIInsights(ctx context.Context, productID string, summary string, sentiment string) error {
-	query := `
-		UPDATE products 
-		SET ai_summary = $1, ai_sentiment_score = $2, ai_last_updated_at = NOW()
-		WHERE id = $3
-	`
-	_, err := r.db.ExecContext(ctx, query, summary, sentiment, productID)
+func (r *productRepository) UpdateAIInsights(ctx context.Context, productID string, summary string, badge string, embedding []float32) error {
+	// Hem AI özetini hem de embedding (vektör) kolonunu güncelliyoruz
+	query := `UPDATE products SET ai_summary = $1, ai_sentiment_score = $2, embedding = $3, updated_at = NOW() WHERE id = $4`
+
+	_, err := r.db.ExecContext(ctx, query, summary, badge, pgvector.NewVector(embedding), productID)
 	return err
 }
 
@@ -353,17 +388,35 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 	return nil
 }
 
-func (r *productRepository) SearchBySimilarity(ctx context.Context, embedding []float32, limit int) ([]domain.Product, error) {
+func (r *productRepository) SearchBySimilarity(ctx context.Context, embedding []float32, limit int, maxPrice float64, inStock bool) ([]domain.Product, error) {
+	// Temel sorgumuz (1=1 hilesiyle dinamik WHERE eklemeyi kolaylaştırıyoruz)
 	query := `
 		SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 		FROM products p 
 		JOIN stores s ON p.store_id = s.id 
-		ORDER BY p.embedding <=> $1 
-		LIMIT $2
+		WHERE 1=1
 	`
 
+	var args []interface{}
+	argIdx := 1
+
+	// 1. HARD FILTERS (B-Tree İndexleri üzerinden veri kümesini daraltır)
+	if inStock {
+		query += ` AND p.stock > 0`
+	}
+
+	if maxPrice > 0 {
+		query += fmt.Sprintf(` AND p.price <= $%d`, argIdx)
+		args = append(args, maxPrice)
+		argIdx++
+	}
+
+	// 2. VECTOR SEARCH (Sadece filtreden geçenler üzerinde HNSW Cosine Similarity)
+	query += fmt.Sprintf(` ORDER BY p.embedding <=> $%d LIMIT $%d`, argIdx, argIdx+1)
+	args = append(args, pgvector.NewVector(embedding), limit)
+
 	var products []domain.Product
-	if err := r.db.SelectContext(ctx, &products, query, pgvector.NewVector(embedding), limit); err != nil {
+	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {
 		return nil, err
 	}
 
