@@ -2,6 +2,7 @@ package http
 
 import (
 	"drewisy/internal/domain"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,6 +12,15 @@ import (
 
 type ProductHandler struct {
 	usecase domain.ProductUsecase
+}
+
+type PreSignedURLRequest struct {
+	Count int `json:"count"`
+}
+
+type PreSignedURLResponse struct {
+	UploadURL string `json:"upload_url"`
+	FileURL   string `json:"file_url"`
 }
 
 func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
@@ -31,6 +41,9 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	e.GET("/categories", handler.GetCategories)
 
 	e.PUT("/seller/products/:id", handler.UpdateProductFull, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
+
+	e.POST("/s3/presigned-urls", handler.GeneratePresignedURLs)
+	e.PUT("/mock-s3/:filename", handler.MockS3Upload)
 }
 
 func (h *ProductHandler) GetProductDetail(c echo.Context) error {
@@ -201,4 +214,55 @@ func (h *ProductHandler) GetUploadURL(c echo.Context) error {
 		"upload_url": uploadURL, // Frontend dosyayı buraya PUT edecek
 		"final_url":  finalURL,  // Frontend ürün eklerken (Store) bu URL'i JSON içinde gönderecek
 	})
+}
+
+func (h *ProductHandler) GeneratePresignedURLs(c echo.Context) error {
+	var req PreSignedURLRequest
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "Geçersiz format")
+	}
+
+	if req.Count <= 0 || req.Count > 10 {
+		return respondError(c, http.StatusBadRequest, "Count 1 ile 10 arasında olmalıdır")
+	}
+
+	var urls []PreSignedURLResponse
+	baseURL := os.Getenv("BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+
+	for i := 0; i < req.Count; i++ {
+		// Rastgele bir dosya adı üret
+		fileName := strconv.FormatInt(c.Request().Context().Value("request_time").(int64), 10) + "_" + strconv.Itoa(i) + ".jpg"
+
+		urls = append(urls, PreSignedURLResponse{
+			UploadURL: baseURL + "/api/v1/mock-s3/" + fileName,
+			FileURL:   baseURL + "/static/products/" + fileName,
+		})
+	}
+
+	return respondSuccess(c, http.StatusOK, urls)
+}
+
+// 2. AWS S3'ün PUT Davranışını Taklit Eden Handler
+func (h *ProductHandler) MockS3Upload(c echo.Context) error {
+	filename := c.Param("filename")
+	if filename == "" {
+		return c.String(http.StatusBadRequest, "Dosya adı eksik")
+	}
+
+	targetPath := "uploads/products/" + filename
+	dst, err := os.Create(targetPath)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Dosya oluşturulamadı")
+	}
+	defer dst.Close()
+
+	if c.Request().Body != nil {
+		if _, err = io.Copy(dst, c.Request().Body); err != nil {
+			return c.String(http.StatusInternalServerError, "Veri yazılamadı")
+		}
+	}
+	return c.NoContent(http.StatusOK)
 }
