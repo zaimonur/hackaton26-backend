@@ -1,5 +1,6 @@
--- 1. UUID eklentisini aktif et
+-- 1. Eklentileri aktif et
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS vector; --  RAG Mimarisi için pgvector eklentisi
 
 -- 2. USERS Tablosu
 CREATE TABLE users (
@@ -33,8 +34,9 @@ CREATE TABLE products (
     image_path VARCHAR(500),
     ai_summary TEXT DEFAULT NULL,
     ai_sentiment_score VARCHAR(50) DEFAULT NULL,
-    ai_sentiment_badge VARCHAR(100) DEFAULT NULL, -- YENİ: Anasayfa rozetleri için
+    ai_sentiment_badge VARCHAR(100) DEFAULT NULL, 
     ai_last_updated_at TIMESTAMP DEFAULT NULL,
+    embedding vector(768), --  Gemini tarafından üretilen vektörleri tutacak kolon
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -79,7 +81,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     CONSTRAINT unique_product_user_review UNIQUE(product_id, user_id)
 );
 
--- 7. USER_VIEW_HISTORY Tablosu (AI ve Öneriler için Ayak İzleri)
+-- 7. USER_VIEW_HISTORY Tablosu
 CREATE TABLE user_view_history (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -102,14 +104,14 @@ CREATE TABLE notifications (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type VARCHAR(50) NOT NULL CHECK (type IN ('NEW_MESSAGE', 'ORDER_UPDATE')),
-    reference_id UUID, -- Mesaj ID veya Sipariş ID
+    reference_id UUID, 
     title VARCHAR(255) NOT NULL,
     body TEXT NOT NULL,
     is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- HIZLANDIRICI İNDEKSLER
+-- HIZLANDIRICI İNDEKSLER VE VEKTÖR İNDEKSİ
 CREATE INDEX idx_orders_customer_id ON orders(customer_id);
 CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_store_id ON products(store_id);
@@ -122,3 +124,6 @@ CREATE INDEX idx_product_images_product_id ON product_images(product_id);
 CREATE INDEX idx_messages_sender_receiver ON messages(sender_id, receiver_id);
 CREATE INDEX idx_notifications_user_unread ON notifications(user_id) WHERE is_read = FALSE;
 CREATE INDEX idx_notifications_created_at ON notifications(created_at DESC);
+
+--  Vektör Cosine Similarity aramalarını hızlandırmak için HNSW Indeksi
+CREATE INDEX products_embedding_idx ON products USING hnsw (embedding vector_cosine_ops);

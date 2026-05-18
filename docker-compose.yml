@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: drewisy-db
     ports:
       - "5434:5432"

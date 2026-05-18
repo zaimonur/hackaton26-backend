@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
@@ -16,11 +17,11 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	handler := &ProductHandler{usecase: u}
 
 	// Mevcut Rotalar
-	e.GET("/products", handler.Fetch)
-	e.GET("/seller/products", handler.FetchBySeller, AuthMiddleware(), RBACMiddleware("seller"))
-	e.POST("/products", handler.Store, AuthMiddleware(), RBACMiddleware("seller"))
-	e.PATCH("/seller/products/:id", handler.UpdatePriceAndStock, AuthMiddleware(), RBACMiddleware("seller"))
-	e.DELETE("/products/:id", handler.Delete, AuthMiddleware(), RBACMiddleware("seller"))
+	e.GET("/products", handler.FetchProducts) //  1: Fetch yerine FetchProducts yapıldı
+	e.GET("/seller/products", handler.FetchBySeller, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
+	e.POST("/products", handler.Store, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
+	e.PATCH("/seller/products/:id", handler.UpdatePriceAndStock, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
+	e.DELETE("/products/:id", handler.Delete, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 
 	// PDP (Public) Rotaları
 	e.GET("/products/:id", handler.GetProductDetail)
@@ -29,7 +30,7 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	e.GET("/products/bestsellers", handler.GetBestsellers)
 	e.GET("/categories", handler.GetCategories)
 
-	e.PUT("/seller/products/:id", handler.UpdateProductFull, AuthMiddleware(), RBACMiddleware("seller"))
+	e.PUT("/seller/products/:id", handler.UpdateProductFull, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 }
 
 func (h *ProductHandler) GetProductDetail(c echo.Context) error {
@@ -86,15 +87,22 @@ func (h *ProductHandler) FetchBySeller(c echo.Context) error {
 	return respondSuccess(c, http.StatusOK, res)
 }
 
-func (h *ProductHandler) Fetch(c echo.Context) error {
+func (h *ProductHandler) FetchProducts(c echo.Context) error {
 	category := c.QueryParam("category")
-	query := c.QueryParam("q")
+	searchQuery := c.QueryParam("q")
 
-	res, err := h.usecase.Fetch(c.Request().Context(), category, query)
+	// Query'den string olarak gelen page ve limit değerlerini Integer'a çeviriyoruz
+	page, _ := strconv.Atoi(c.QueryParam("page"))
+	limit, _ := strconv.Atoi(c.QueryParam("limit"))
+
+	// Usecase'e iletiyoruz. (0 gelse bile GetOffset fonksiyonumuz onu 1 ve 20'ye yuvarlayacak)
+	products, err := h.usecase.Fetch(c.Request().Context(), category, searchQuery, page, limit)
 	if err != nil {
-		return respondError(c, http.StatusInternalServerError, "Sunucu hatası")
+		return respondError(c, http.StatusInternalServerError, err.Error())
 	}
-	return respondSuccess(c, http.StatusOK, res)
+
+	//  2: respondJSON yerine senin helper'ın olan respondSuccess kullanıldı.
+	return respondSuccess(c, http.StatusOK, products)
 }
 
 func (h *ProductHandler) Store(c echo.Context) error {
@@ -187,7 +195,6 @@ func (h *ProductHandler) UpdateProductFull(c echo.Context) error {
 	price, _ := strconv.ParseFloat(c.FormValue("price"), 64)
 	stock, _ := strconv.Atoi(c.FormValue("stock"))
 
-	// DÜZELTME 1: Images alanı form.File["images"] ile DTO'ya bağlandı
 	req := domain.UpdateProductFullRequest{
 		Title:       c.FormValue("title"),
 		Description: c.FormValue("description"),

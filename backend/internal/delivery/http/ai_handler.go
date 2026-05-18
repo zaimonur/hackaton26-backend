@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -15,13 +16,13 @@ func NewAIHandler(e *echo.Group, u domain.AIUsecase) {
 	handler := &AIHandler{usecase: u}
 
 	// AuthMiddleware ve RBACMiddleware ile sadece giriş yapmış satıcılara izin veriyoruz
-	e.POST("/ai/generate-description", handler.GenerateDescription, AuthMiddleware(), RBACMiddleware("seller"))
+	e.POST("/ai/generate-description", handler.GenerateDescription, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 
 	e.POST("/ai/search", handler.SmartSearch)
 	// AI Özetleme Endpoint'i (Public)
 	e.GET("/products/:id/reviews/ai-summary", handler.SummarizeProductReviews)
 
-	e.GET("/ai/recommendations", handler.GetHeroRecommendations, AuthMiddleware(), RBACMiddleware("customer"))
+	e.GET("/ai/recommendations", handler.GetHeroRecommendations, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("customer"))
 }
 
 func (h *AIHandler) GenerateDescription(c echo.Context) error {

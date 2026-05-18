@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -13,7 +14,7 @@ type StoreHandler struct {
 
 func NewStoreHandler(e *echo.Group, u domain.StoreUsecase) {
 	handler := &StoreHandler{usecase: u}
-	e.POST("/stores", handler.Create, AuthMiddleware(), RBACMiddleware("seller"))
+	e.POST("/stores", handler.Create, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 }
 
 func (h *StoreHandler) Create(c echo.Context) error {

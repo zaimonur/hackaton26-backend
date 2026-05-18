@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -15,7 +16,7 @@ func NewHistoryHandler(e *echo.Group, u domain.HistoryUsecase) {
 	handler := &HistoryHandler{usecase: u}
 
 	// Sadece customer için yetkilendirilmiş uçlar
-	hGroup := e.Group("/users/history", AuthMiddleware(), RBACMiddleware("customer"))
+	hGroup := e.Group("/users/history", AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("customer"))
 	hGroup.POST("", handler.LogHistory)
 	hGroup.GET("", handler.GetHistory)
 }

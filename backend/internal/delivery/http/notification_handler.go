@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -13,8 +14,8 @@ type NotificationHandler struct {
 
 func NewNotificationHandler(e *echo.Group, u domain.NotificationUsecase) {
 	handler := &NotificationHandler{usecase: u}
-	e.GET("/notifications", handler.GetMyNotifications, AuthMiddleware())
-	e.PATCH("/notifications/:id/read", handler.MarkAsRead, AuthMiddleware())
+	e.GET("/notifications", handler.GetMyNotifications, AuthMiddleware(os.Getenv("JWT_SECRET")))
+	e.PATCH("/notifications/:id/read", handler.MarkAsRead, AuthMiddleware(os.Getenv("JWT_SECRET")))
 }
 
 func (h *NotificationHandler) GetMyNotifications(c echo.Context) error {

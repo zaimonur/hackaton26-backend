@@ -57,7 +57,8 @@ func (u *orderUsecase) CreateOrder(ctx context.Context, customerID string, req *
 		Status:      "pending",
 	}
 
-	if err := u.orderRepo.Create(ctx, order, orderItems); err != nil {
+	//  Transaction zırhına sahip repository metodunu çağırıyoruz
+	if err := u.orderRepo.CreateOrderTx(ctx, order, orderItems); err != nil {
 		return nil, err
 	}
 

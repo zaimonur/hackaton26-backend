@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/pgvector/pgvector-go"
 )
 
 type productRepository struct {
@@ -17,7 +18,7 @@ func NewProductRepository(db *sqlx.DB) domain.ProductRepository {
 	return &productRepository{db}
 }
 
-func (r *productRepository) Fetch(ctx context.Context, category, searchQuery string) ([]domain.Product, error) {
+func (r *productRepository) Fetch(ctx context.Context, category, searchQuery string, limit, offset int) ([]domain.Product, error) {
 	query := `SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 			  FROM products p 
 			  JOIN stores s ON p.store_id = s.id 
@@ -38,7 +39,9 @@ func (r *productRepository) Fetch(ctx context.Context, category, searchQuery str
 		argId++
 	}
 
-	query += ` ORDER BY p.created_at DESC`
+	//  LIMIT ve OFFSET değişkenlerini güvenli bir şekilde sorguya enjekte ediyoruz.
+	query += fmt.Sprintf(` ORDER BY p.created_at DESC LIMIT $%d OFFSET $%d`, argId, argId+1)
+	args = append(args, limit, offset)
 
 	var products []domain.Product
 	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {
@@ -97,11 +100,11 @@ func (r *productRepository) Store(ctx context.Context, p *domain.Product) (err e
 		}
 	}()
 
-	query := `INSERT INTO products (store_id, title, description, price, stock, category, image_path, created_at, updated_at) 
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW()) 
+	query := `INSERT INTO products (store_id, title, description, price, stock, category, image_path, embedding, created_at, updated_at) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()) 
 			  RETURNING id, created_at, updated_at`
 
-	err = tx.QueryRowxContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath).
+	err = tx.QueryRowxContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, pgvector.NewVector(p.Embedding)).
 		Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return errors.New("ürün kaydedilemedi")
@@ -317,10 +320,10 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 
 	updateQuery := `
 		UPDATE products 
-		SET title = $1, description = $2, price = $3, stock = $4, category = $5, image_path = $6, updated_at = NOW()
-		WHERE id = $7 AND store_id = $8
+		SET title = $1, description = $2, price = $3, stock = $4, category = $5, image_path = $6, embedding = $7, updated_at = NOW()
+		WHERE id = $8 AND store_id = $9
 	`
-	result, err := tx.ExecContext(ctx, updateQuery, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, p.ID, p.StoreID)
+	result, err := tx.ExecContext(ctx, updateQuery, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, pgvector.NewVector(p.Embedding), p.ID, p.StoreID)
 	if err != nil {
 		return errors.New("ürün bilgileri güncellenirken veritabanı hatası oluştu")
 	}
@@ -348,4 +351,24 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 	}
 
 	return nil
+}
+
+func (r *productRepository) SearchBySimilarity(ctx context.Context, embedding []float32, limit int) ([]domain.Product, error) {
+	query := `
+		SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
+		FROM products p 
+		JOIN stores s ON p.store_id = s.id 
+		ORDER BY p.embedding <=> $1 
+		LIMIT $2
+	`
+
+	var products []domain.Product
+	if err := r.db.SelectContext(ctx, &products, query, pgvector.NewVector(embedding), limit); err != nil {
+		return nil, err
+	}
+
+	if products == nil {
+		products = []domain.Product{}
+	}
+	return products, nil
 }

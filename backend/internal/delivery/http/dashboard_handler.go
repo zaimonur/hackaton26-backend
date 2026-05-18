@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -13,8 +14,8 @@ type DashboardHandler struct {
 
 func NewDashboardHandler(e *echo.Group, u domain.DashboardUsecase) {
 	handler := &DashboardHandler{usecase: u}
-	e.GET("/seller/dashboard/sales", handler.GetSalesDashboard, AuthMiddleware(), RBACMiddleware("seller"))
-	e.GET("/seller/dashboard/ai-summary", handler.GetAISummary, AuthMiddleware(), RBACMiddleware("seller"))
+	e.GET("/seller/dashboard/sales", handler.GetSalesDashboard, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
+	e.GET("/seller/dashboard/ai-summary", handler.GetAISummary, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 }
 
 func (h *DashboardHandler) GetSalesDashboard(c echo.Context) error {

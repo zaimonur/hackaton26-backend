@@ -81,16 +81,15 @@ type UpdateOrderStatusRequest struct {
 	Status string `json:"status" validate:"required"`
 }
 
-// OrderRepository Arayüzü Güncellemesi
+// OrderRepository
 type OrderRepository interface {
-	Create(ctx context.Context, order *Order, items []OrderItem) error
-
+	CreateOrderTx(ctx context.Context, order *Order, items []OrderItem) error
 	FetchBySellerId(ctx context.Context, sellerID string) ([]SellerOrderResponse, error)
 	FetchByCustomerId(ctx context.Context, customerID string) ([]CustomerOrderResponse, error)
 	UpdateStatus(ctx context.Context, orderID string, status string, sellerID string) (string, error)
 }
 
-// OrderUsecase Arayüzü Güncellemesi
+// OrderUsecase
 type OrderUsecase interface {
 	CreateOrder(ctx context.Context, customerID string, req *CreateOrderRequest) (*OrderResponse, error)
 

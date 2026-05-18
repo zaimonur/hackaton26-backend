@@ -36,6 +36,7 @@ type AIRecommendationJSON struct {
 type AIService interface {
 	GenerateText(ctx context.Context, prompt string) (string, error)
 	SmartSearch(ctx context.Context, catalogJSON string, userQuery string) ([]string, error)
+	CreateEmbedding(ctx context.Context, text string) ([]float32, error)
 }
 
 // Usecase (İş Mantığı) Katmanı İçin Arayüz

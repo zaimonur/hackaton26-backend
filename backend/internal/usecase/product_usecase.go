@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"drewisy/internal/config"
 	"drewisy/internal/domain"
 	"drewisy/internal/infrastructure/storage"
 	"encoding/json"
@@ -25,12 +26,12 @@ func NewProductUsecase(r domain.ProductRepository, sr domain.StoreRepository, s 
 func (u *productUsecase) FetchBySeller(ctx context.Context, sellerID string) ([]domain.ProductResponse, error) {
 	store, err := u.storeRepo.GetBySellerId(ctx, sellerID)
 	if err != nil {
-		return nil, errors.New("mağaza bulunamadı, önce bir mağaza oluşturmalısınız")
+		return nil, fmt.Errorf("mağaza bulunamadı, önce bir mağaza oluşturmalısınız: %w", err)
 	}
 
 	products, err := u.repo.FetchByStoreId(ctx, store.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ürünler getirilirken veritabanı hatası oluştu: %w", err)
 	}
 
 	res := make([]domain.ProductResponse, 0, len(products))
@@ -40,34 +41,13 @@ func (u *productUsecase) FetchBySeller(ctx context.Context, sellerID string) ([]
 	return res, nil
 }
 
-func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string) ([]domain.ProductResponse, error) {
-	searchQuery = strings.TrimSpace(searchQuery)
-	wordCount := len(strings.Fields(searchQuery))
+func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string, page, limit int) ([]domain.ProductResponse, error) {
+	params := domain.PaginationParams{Page: page, Limit: limit}
+	safeLimit, safeOffset := params.GetOffset()
 
-	var products []domain.Product
-	var err error
-
-	if wordCount > 2 {
-		catalog, err := u.repo.GetAllForAI(ctx)
-		if err != nil {
-			return nil, errors.New("ai araması için katalog okunamadı")
-		}
-
-		catalogBytes, _ := json.Marshal(catalog)
-		matchedIDs, err := u.aiService.SmartSearch(ctx, string(catalogBytes), searchQuery)
-		if err != nil {
-			return nil, err
-		}
-
-		products, err = u.repo.GetByIDs(ctx, matchedIDs)
-		if err != nil {
-			return nil, errors.New("ai eşleşmeleri veritabanından çekilemedi")
-		}
-	} else {
-		products, err = u.repo.Fetch(ctx, category, searchQuery)
-		if err != nil {
-			return nil, err
-		}
+	products, err := u.repo.Fetch(ctx, category, searchQuery, safeLimit, safeOffset)
+	if err != nil {
+		return nil, fmt.Errorf("katalog getirilemedi: %w", err)
 	}
 
 	res := make([]domain.ProductResponse, 0, len(products))
@@ -80,7 +60,7 @@ func (u *productUsecase) Fetch(ctx context.Context, category, searchQuery string
 func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain.CreateProductRequest) (*domain.ProductResponse, error) {
 	store, err := u.storeRepo.GetBySellerId(ctx, sellerID)
 	if err != nil {
-		return nil, errors.New("ürün eklemek için önce bir mağaza oluşturmalısınız")
+		return nil, fmt.Errorf("ürün eklenemedi (Mağaza doğrulama hatası): %w", err)
 	}
 
 	req.Title = strings.TrimSpace(req.Title)
@@ -89,22 +69,18 @@ func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain
 	if req.Title == "" || req.Category == "" || req.Price <= 0 {
 		return nil, errors.New("eksik veya hatalı ürün bilgisi")
 	}
-	if len(req.Images) == 0 {
-		return nil, errors.New("en az bir ürün görseli zorunludur")
-	}
 
-	var coverPath string
 	var gallery []string
-
-	for i, img := range req.Images {
+	for _, img := range req.Images {
 		path, err := u.storage.UploadImage(img, "products")
 		if err != nil {
-			return nil, err
-		}
-		if i == 0 {
-			coverPath = path
+			return nil, fmt.Errorf("görsel yükleme başarısız: %w", err)
 		}
 		gallery = append(gallery, path)
+	}
+
+	if len(gallery) == 0 {
+		return nil, errors.New("ürünün en az bir görseli bulunmak zorundadır")
 	}
 
 	product := domain.Product{
@@ -116,12 +92,21 @@ func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain
 		Price:       req.Price,
 		Stock:       req.Stock,
 		Category:    req.Category,
-		ImagePath:   coverPath,
+		ImagePath:   gallery[0],
 		Gallery:     gallery,
 	}
 
-	if err := u.repo.Store(ctx, &product); err != nil {
-		return nil, errors.New("ürün veritabanına kaydedilemedi")
+	embedText := fmt.Sprintf("Kategori: %s, Başlık: %s, Açıklama: %s", product.Category, product.Title, product.Description)
+	embedding, err := u.aiService.CreateEmbedding(ctx, embedText)
+	if err == nil {
+		product.Embedding = embedding // Sadece PGVector tablosunda olduğu varsayılarak saklandı
+	} else {
+		fmt.Println("UYARI: RAG Vektör üretilemedi:", err)
+	}
+
+	err = u.repo.Store(ctx, &product)
+	if err != nil {
+		return nil, fmt.Errorf("ürün veritabanına kaydedilemedi: %w", err)
 	}
 
 	res := mapProductToResponse(product)
@@ -129,66 +114,69 @@ func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain
 }
 
 func (u *productUsecase) UpdatePriceAndStock(ctx context.Context, sellerID string, productID string, req *domain.UpdateProductRequest) (*domain.ProductResponse, error) {
+	// Pointer yerine direkt değer kullanıldığı için <= 0 kontrolü yapılıyor.
+	if req.Price <= 0 {
+		return nil, errors.New("fiyat 0'dan büyük olmalıdır")
+	}
+	if req.Stock < 0 {
+		return nil, errors.New("stok negatif olamaz")
+	}
+
 	store, err := u.storeRepo.GetBySellerId(ctx, sellerID)
 	if err != nil {
-		return nil, errors.New("işlem yapılamadı: mağaza bulunamadı")
+		return nil, fmt.Errorf("satıcıya ait mağaza bulunamadı: %w", err)
 	}
 
 	err = u.repo.UpdatePriceAndStock(ctx, productID, store.ID, req.Price, req.Stock)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ürün güncellenemedi (Belki de size ait değil): %w", err)
 	}
 
-	product, err := u.repo.GetByID(ctx, productID)
+	updatedProduct, err := u.repo.GetByID(ctx, productID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("güncellenen ürün getirilemedi: %w", err)
 	}
 
-	res := mapProductToResponse(*product)
+	res := mapProductToResponse(*updatedProduct)
 	return &res, nil
 }
 
 func (u *productUsecase) Delete(ctx context.Context, sellerID string, productID string) error {
 	store, err := u.storeRepo.GetBySellerId(ctx, sellerID)
 	if err != nil {
-		return errors.New("işlem yapılamadı: mağaza bulunamadı")
+		return fmt.Errorf("yetkisiz işlem, mağaza bulunamadı: %w", err)
 	}
 
-	return u.repo.Delete(ctx, productID, store.ID)
+	err = u.repo.Delete(ctx, productID, store.ID)
+	if err != nil {
+		return fmt.Errorf("ürün silinemedi: %w", err)
+	}
+	return nil
 }
 
-func (u *productUsecase) GetProductDetail(ctx context.Context, id string) (*domain.ProductDetailResponse, error) {
-	product, err := u.repo.GetByID(ctx, id)
+func (u *productUsecase) GetProductDetail(ctx context.Context, productID string) (*domain.ProductDetailResponse, error) {
+	product, err := u.repo.GetByID(ctx, productID)
 	if err != nil {
-		return nil, errors.New("ürün bulunamadı")
+		return nil, fmt.Errorf("ürün detayları getirilemedi: %w", err)
 	}
 
-	reviews, err := u.reviewRepo.GetByProductID(ctx, id)
+	reviews, err := u.reviewRepo.GetByProductID(ctx, productID)
 	if err != nil {
-		return nil, errors.New("ürün yorumları alınamadı")
+		reviews = []domain.ReviewResponse{}
 	}
 
-	limit := 3
-	if len(reviews) < 3 {
-		limit = len(reviews)
-	}
-	recentReviews := reviews[:limit]
-
+	// Pointer kontrolleri yapılarak DTO'ya flatten (düz) olarak aktarılıyor
 	aiSummary := ""
 	if product.AISummary != nil {
 		aiSummary = *product.AISummary
 	}
 
-	aiSentimentBadge := ""
+	aiBadge := ""
 	if product.AISentimentScore != nil {
-		aiSentimentBadge = *product.AISentimentScore
+		aiBadge = *product.AISentimentScore
 	}
 
-	gallery := product.Gallery
-	if gallery == nil {
-		gallery = []string{}
-	}
-
+	// Struct eşleşmesi düzeltildi
 	return &domain.ProductDetailResponse{
 		ID:               product.ID,
 		SellerID:         product.SellerID,
@@ -200,10 +188,10 @@ func (u *productUsecase) GetProductDetail(ctx context.Context, id string) (*doma
 		Stock:            product.Stock,
 		Category:         product.Category,
 		ImagePath:        product.ImagePath,
-		Gallery:          gallery,
+		Gallery:          product.Gallery,
 		AISummary:        aiSummary,
-		AISentimentBadge: aiSentimentBadge,
-		RecentReviews:    recentReviews,
+		AISentimentBadge: aiBadge,
+		RecentReviews:    reviews,
 	}, nil
 }
 
@@ -215,74 +203,28 @@ func (u *productUsecase) AskQuestion(ctx context.Context, productID string, req 
 
 	product, err := u.repo.GetByID(ctx, productID)
 	if err != nil {
-		return nil, errors.New("ürün bulunamadı")
+		return nil, fmt.Errorf("ürün bilgisi bulunamadı: %w", err)
 	}
 
-	reviews, _ := u.reviewRepo.GetByProductID(ctx, productID)
+	// AI Prompt izole edildi ve config üzerinden çağrılıyor
+	systemPrompt := fmt.Sprintf(config.ProductAssistantPrompt,
+		product.Title, product.Category, product.Price, product.Description, req.Question)
 
-	reviewsContext := ""
-	for i, r := range reviews {
-		if i >= 5 {
-			break
-		}
-		reviewsContext += fmt.Sprintf("- %d Yıldız: %s\n", r.Rating, r.Comment)
-	}
-	if reviewsContext == "" {
-		reviewsContext = "Henüz yorum yapılmamış."
-	}
-
-	prompt := fmt.Sprintf(`Sen bağımsız ve tarafsız bir e-ticaret alışveriş asistanısın. 
-Görevin, aşağıdaki bilgilere dayanarak müşteriye yardımcı olmaktır. 
-Lütfen "biz", "ürünümüz" gibi ifadeler yerine "bu ürün", "mağaza" gibi 3. şahıs ifadeleri kullan. 
-
-ÜRÜN BİLGİLERİ:
-Başlık: %s | Kategori: %s | Fiyat: %.2f TL | Stok Durumu: %d adet
-Açıklama: %s
-
-MÜŞTERİ YORUMLARI:
-%s
-
-KULLANICI SORUSU: %s
-
-Yanıtını verirken hem ürün özelliklerini hem de kullanıcı yorumlarındaki genel havayı (memnuniyet, şikayet vb.) dikkate al.`,
-		product.Title, product.Category, product.Price, product.Stock, product.Description, reviewsContext, req.Question,
-	)
-
-	answer, err := u.aiService.GenerateText(ctx, prompt)
+	aiResponse, err := u.aiService.GenerateText(ctx, systemPrompt)
 	if err != nil {
-		return nil, errors.New("yapay zeka servisi şu an yanıt veremiyor")
+		return nil, fmt.Errorf("ai asistan yanıt üretemedi: %w", err)
 	}
 
 	return &domain.ProductAskResponse{
-		Answer: strings.TrimSpace(answer),
+		Answer: aiResponse,
 	}, nil
 }
 
-func mapProductToResponse(p domain.Product) domain.ProductResponse {
-	gallery := p.Gallery
-	if gallery == nil {
-		gallery = []string{}
-	}
-
-	return domain.ProductResponse{
-		ID:          p.ID,
-		SellerID:    p.SellerID,
-		StoreID:     p.StoreID,
-		StoreName:   p.StoreName,
-		Title:       p.Title,
-		Description: p.Description,
-		Price:       p.Price,
-		Stock:       p.Stock,
-		Category:    p.Category,
-		ImagePath:   p.ImagePath,
-		Gallery:     gallery,
-	}
-}
-
 func (u *productUsecase) GetBestsellers(ctx context.Context) ([]domain.ProductResponse, error) {
+	// Limit parametresi (örneğin 10) eklendi
 	products, err := u.repo.GetBestsellers(ctx, 10)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("çok satanlar çekilemedi: %w", err)
 	}
 
 	res := make([]domain.ProductResponse, 0, len(products))
@@ -294,15 +236,18 @@ func (u *productUsecase) GetBestsellers(ctx context.Context) ([]domain.ProductRe
 
 func (u *productUsecase) GetCategories(ctx context.Context) ([]string, error) {
 	return []string{
-		"Giyim", "Elektronik", "Ev & Yaşam", "Kozmetik & Kişisel Bakım",
-		"Spor & Outdoor", "Kitap & Hobi", "Takı & Aksesuar", "Bitki & Çiçek",
+		"Elektronik", "Moda", "Ev & Yaşam", "Kozmetik",
+		"Spor & Outdoor", "Kitap & Kırtasiye", "Süpermarket",
+		"Oto & Yapı Market", "Hobi & Oyuncak", "Takı & Saat",
+		"Bebek & Anne", "Pet Shop", "Ofis & Büro",
+		"Bahçe & Yapı Market", "Bitki & Çiçek",
 	}, nil
 }
 
 func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, productID string, req *domain.UpdateProductFullRequest) (*domain.ProductResponse, error) {
 	store, err := u.storeRepo.GetBySellerId(ctx, sellerID)
 	if err != nil {
-		return nil, errors.New("işlem yapılamadı: mağaza bulunamadı")
+		return nil, fmt.Errorf("işlem yapılamadı: mağaza bulunamadı: %w", err)
 	}
 
 	req.Title = strings.TrimSpace(req.Title)
@@ -316,14 +261,14 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 
 	if req.KeptImages != "" {
 		if err := json.Unmarshal([]byte(req.KeptImages), &gallery); err != nil {
-			return nil, errors.New("kept_images geçerli bir JSON array formatında olmalıdır")
+			return nil, fmt.Errorf("kept_images geçerli bir JSON array formatında olmalıdır: %w", err)
 		}
 	}
 
 	for _, img := range req.Images {
 		path, err := u.storage.UploadImage(img, "products")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("yeni görseller yüklenirken hata: %w", err)
 		}
 		gallery = append(gallery, path)
 	}
@@ -346,10 +291,36 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 		Gallery:     gallery,
 	}
 
-	if err := u.repo.UpdateFull(ctx, &product); err != nil {
-		return nil, err
+	embedText := fmt.Sprintf("Kategori: %s, Başlık: %s, Açıklama: %s", product.Category, product.Title, product.Description)
+	embedding, err := u.aiService.CreateEmbedding(ctx, embedText)
+	if err == nil {
+		product.Embedding = embedding
+	} else {
+		fmt.Println("UYARI: RAG Vektör güncellenemedi:", err)
+	}
+
+	err = u.repo.UpdateFull(ctx, &product)
+	if err != nil {
+		return nil, fmt.Errorf("ürün tamamen güncellenemedi: %w", err)
 	}
 
 	res := mapProductToResponse(product)
 	return &res, nil
+}
+
+// Domain dosyasındaki ProductResponse struct'ı ile eşleştirildi
+func mapProductToResponse(p domain.Product) domain.ProductResponse {
+	return domain.ProductResponse{
+		ID:          p.ID,
+		SellerID:    p.SellerID,
+		StoreID:     p.StoreID,
+		StoreName:   p.StoreName,
+		Title:       p.Title,
+		Description: p.Description,
+		Price:       p.Price,
+		Stock:       p.Stock,
+		Category:    p.Category,
+		ImagePath:   p.ImagePath,
+		Gallery:     p.Gallery,
+	}
 }

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"drewisy/internal/config"
 	"drewisy/internal/domain"
 	"encoding/json"
 	"errors"
@@ -34,21 +35,16 @@ func (u *aiUsecase) GenerateDescription(ctx context.Context, req *domain.Generat
 		return nil, errors.New("ürün adı ve kategorisi zorunludur")
 	}
 
-	prompt := fmt.Sprintf(
-		"Sen uzman bir e-ticaret metin yazarısın. Ürün adı: '%s', Kategorisi: '%s', Özellikleri/Anahtar Kelimeler: '%s'. "+
-			"Bu bilgileri kullanarak satışı artıracak, SEO uyumlu, profesyonel ama samimi bir dille, "+
-			"en fazla 2-3 kısa paragraf olacak şekilde bir ürün açıklaması yaz. "+
-			"Çıktı sadece açıklama metni olsun, gereksiz sohbet, selamlama veya markdown başlıkları ekleme.",
-		req.Title, req.Category, req.Keywords,
-	)
+	//Promptları merkezi Config üzerinden alıyoruz
+	prompt := fmt.Sprintf(config.GenerateDescriptionPrompt, req.Title, req.Category, req.Keywords)
 
-	generatedText, err := u.aiService.GenerateText(ctx, prompt)
+	response, err := u.aiService.GenerateText(ctx, prompt)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ai açıklama üretemedi: %w", err)
 	}
 
 	return &domain.GenerateDescriptionResponse{
-		GeneratedDescription: strings.TrimSpace(generatedText),
+		GeneratedDescription: response,
 	}, nil
 }
 
@@ -58,49 +54,31 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 		return nil, errors.New("arama metni boş olamaz")
 	}
 
-	products, err := u.productRepo.Fetch(ctx, "", "")
-	if err != nil {
-		return nil, errors.New("katalog okunamadı")
-	}
-	if len(products) == 0 {
-		return &domain.SmartSearchResponse{Products: []domain.ProductResponse{}}, nil
-	}
-
-	type miniProduct struct {
-		ID       string `json:"id"`
-		Title    string `json:"title"`
-		Category string `json:"category"`
-	}
-
-	miniCatalog := make([]miniProduct, 0, len(products))
-	productMap := make(map[string]domain.Product)
-
-	for _, p := range products {
-		miniCatalog = append(miniCatalog, miniProduct{ID: p.ID, Title: p.Title, Category: p.Category})
-		productMap[p.ID] = p
-	}
-
-	catalogBytes, _ := json.Marshal(miniCatalog)
-
-	matchedIDs, err := u.aiService.SmartSearch(ctx, string(catalogBytes), req.Query)
+	// 1. Sorguyu vektöre çevir (Artık API'ye tüm DB'yi değil, sadece bu metni yolluyoruz)
+	vector, err := u.aiService.CreateEmbedding(ctx, req.Query)
 	if err != nil {
 		return nil, err
 	}
 
-	matchedProducts := make([]domain.ProductResponse, 0)
-	for _, id := range matchedIDs {
-		if p, exists := productMap[id]; exists {
-			matchedProducts = append(matchedProducts, domain.ProductResponse{
-				ID:          p.ID,
-				StoreID:     p.StoreID,
-				StoreName:   p.StoreName,
-				Title:       p.Title,
-				Description: p.Description,
-				Price:       p.Price,
-				Category:    p.Category,
-				ImagePath:   p.ImagePath,
-			})
-		}
+	// 2. Vektörü pgvector'de cosine similarity ile en yakın 5 ürünü bulacak şekilde arat
+	similarProducts, err := u.productRepo.SearchBySimilarity(ctx, vector, 5)
+	if err != nil {
+		return nil, errors.New("ürün arama başarısız oldu")
+	}
+
+	// 3. Bulunan RAG bağlamını Frontend formatına çevir (LLM'i hiç metin üretiminde bile kullanmadan çok daha hızlı dönebiliriz ya da doğrudan prompt'a yedirebiliriz. Senin mevcut dönüş formatın için doğrudan mapping yapıyoruz).
+	matchedProducts := make([]domain.ProductResponse, 0, len(similarProducts))
+	for _, p := range similarProducts {
+		matchedProducts = append(matchedProducts, domain.ProductResponse{
+			ID:          p.ID,
+			StoreID:     p.StoreID,
+			StoreName:   p.StoreName,
+			Title:       p.Title,
+			Description: p.Description,
+			Price:       p.Price,
+			Category:    p.Category,
+			ImagePath:   p.ImagePath,
+		})
 	}
 
 	return &domain.SmartSearchResponse{Products: matchedProducts}, nil
@@ -181,54 +159,41 @@ Son Yorumlar: %s`, string(salesJSON), string(stockJSON), string(reviewsJSON))
 }
 
 func (u *aiUsecase) GetHeroRecommendations(ctx context.Context, userID string) (*domain.HeroRecommendationResponse, error) {
+	// 1. Müşterinin son 20 işlem geçmişini al
 	history, err := u.historyRepo.GetByUserID(ctx, userID, 20)
 	if err != nil {
 		return nil, errors.New("geçmiş verisi alınamadı")
 	}
 
-	catalog, err := u.productRepo.GetAllForAI(ctx)
-	if err != nil {
-		return nil, errors.New("katalog verisi alınamadı")
-	}
-
+	// 2. Geçmişi analiz edip LLM'e anlamlı bir "tema" bulduruyoruz
 	historyJSON, _ := json.Marshal(history)
-	catalogJSON, _ := json.Marshal(catalog)
+	themePrompt := fmt.Sprintf(config.HeroThemePrompt, string(historyJSON)) //Config kullanımı
 
-	prompt := fmt.Sprintf(`Sen bir yapay zeka alışveriş asistanısın. Müşterinin son incelediği ürünler şunlardır: %s.
-Sitemizdeki tüm aktif ürünler (Katalog) şunlardır: %s.
-Müşterinin zevkine en uygun 12 ürünü katalogdan seç ve bu koleksiyon için yaratıcı, dikkat çekici bir başlık (hero_title) üret.
-Çıktı SADECE raw JSON formatında olmalıdır. Başına veya sonuna "json" gibi markdown işaretleri, selamlaşma veya herhangi bir düz metin KESİNLİKLE ekleme.
-Önereceğin ID'ler kesinlikle sana sağladığım katalogda var olan ID'ler olmalıdır.
-Beklenen format: {"hero_title": "...", "recommended_product_ids": ["uuid-1", "uuid-2", "uuid-3"]}`, string(historyJSON), string(catalogJSON))
-
-	aiResText, err := u.aiService.GenerateText(ctx, prompt)
+	theme, err := u.aiService.GenerateText(ctx, themePrompt)
 	if err != nil {
-		fmt.Println("❌ GEMINI API HATASI:", err)
-		return nil, errors.New("yapay zeka servisi şu an yanıt veremiyor")
+		theme = "Yeni Sezon Trendleri" // Hata olursa fallback
 	}
 
-	// TERMINALE GEMINI'NIN NE DÖNDÜĞÜNÜ BASIYORUZ (HATA AYIKLAMA İÇİN)
-	fmt.Println("=== 🤖 GEMINI RAW RESPONSE ===")
-	fmt.Println(aiResText)
-	fmt.Println("==============================")
-
-	cleanJSON := strings.TrimSpace(aiResText)
-	cleanJSON = strings.TrimPrefix(cleanJSON, "```json")
-	cleanJSON = strings.TrimPrefix(cleanJSON, "```")
-	cleanJSON = strings.TrimSuffix(cleanJSON, "```")
-	cleanJSON = strings.TrimSpace(cleanJSON)
-
-	var aiDTO domain.AIRecommendationJSON
-	if err := json.Unmarshal([]byte(cleanJSON), &aiDTO); err != nil {
-		fmt.Println("❌ JSON PARSE ERROR:", err)
-		fmt.Println("🧼 TEMİZLENMEYE ÇALIŞILAN JSON:", cleanJSON)
-		return nil, errors.New("ai yanıtı uygun formatta okunamadı")
+	// 3. Çıkan bu "tema" cümlesini vektöre çevir
+	vector, err := u.aiService.CreateEmbedding(ctx, theme)
+	if err != nil {
+		return nil, err
 	}
 
-	recommendedProducts, err := u.productRepo.GetByIDs(ctx, aiDTO.RecommendedProductIDs)
+	// 4. Tema vektörüne en yakın 6 ürünü veritabanından çek (RAG)
+	recommendedProducts, err := u.productRepo.SearchBySimilarity(ctx, vector, 6)
 	if err != nil {
 		return nil, errors.New("önerilen ürünler veritabanından çekilemedi")
 	}
+
+	// 5. Koleksiyona havalı bir başlık üretmesi için sadece bulunan 6 ürünü veriyoruz
+	var titles []string
+	for _, p := range recommendedProducts {
+		titles = append(titles, p.Title)
+	}
+
+	titlePrompt := fmt.Sprintf(config.HeroTitlePrompt, strings.Join(titles, ", ")) //Config kullanımı
+	heroTitle, _ := u.aiService.GenerateText(ctx, titlePrompt)
 
 	resProducts := make([]domain.ProductResponse, 0, len(recommendedProducts))
 	for _, p := range recommendedProducts {
@@ -240,7 +205,7 @@ Beklenen format: {"hero_title": "...", "recommended_product_ids": ["uuid-1", "uu
 	}
 
 	return &domain.HeroRecommendationResponse{
-		HeroTitle:           aiDTO.HeroTitle,
+		HeroTitle:           strings.TrimSpace(heroTitle),
 		RecommendedProducts: resProducts,
 	}, nil
 }

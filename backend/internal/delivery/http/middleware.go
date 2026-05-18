@@ -3,7 +3,6 @@ package http
 import (
 	"errors"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -11,7 +10,7 @@ import (
 )
 
 // AuthMiddleware: İstekte geçerli bir JWT olup olmadığını kontrol eder.
-func AuthMiddleware() echo.MiddlewareFunc {
+func AuthMiddleware(secret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			authHeader := c.Request().Header.Get("Authorization")
@@ -24,7 +23,7 @@ func AuthMiddleware() echo.MiddlewareFunc {
 				return respondError(c, http.StatusUnauthorized, "Geçersiz token formatı. Beklenen: Bearer <token>")
 			}
 
-			claims, err := parseToken(parts[1])
+			claims, err := parseToken(parts[1], secret)
 			if err != nil {
 				return respondError(c, http.StatusUnauthorized, err.Error())
 			}
@@ -57,8 +56,7 @@ func RBACMiddleware(allowedRoles ...string) echo.MiddlewareFunc {
 	}
 }
 
-func parseToken(tokenString string) (jwt.MapClaims, error) {
-	secret := os.Getenv("JWT_SECRET")
+func parseToken(tokenString string, secret string) (jwt.MapClaims, error) {
 	if secret == "" {
 		return nil, errors.New("sunucu yapılandırma hatası: JWT_SECRET eksik")
 	}

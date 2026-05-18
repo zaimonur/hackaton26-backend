@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -15,13 +16,13 @@ func NewOrderHandler(e *echo.Group, u domain.OrderUsecase) {
 	handler := &OrderHandler{usecase: u}
 
 	// Müşteri (Customer) rotaları
-	e.POST("/orders", handler.Create, AuthMiddleware(), RBACMiddleware("customer"))
+	e.POST("/orders", handler.Create, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("customer"))
 
 	// Satıcı (Seller) rotaları
-	e.GET("/seller/orders", handler.FetchSellerOrders, AuthMiddleware(), RBACMiddleware("seller"))
-	e.PATCH("/seller/orders/:id/status", handler.UpdateStatus, AuthMiddleware(), RBACMiddleware("seller"))
+	e.GET("/seller/orders", handler.FetchSellerOrders, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
+	e.PATCH("/seller/orders/:id/status", handler.UpdateStatus, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 
-	e.GET("/customer/orders", handler.FetchCustomerOrders, AuthMiddleware(), RBACMiddleware("customer"))
+	e.GET("/customer/orders", handler.FetchCustomerOrders, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("customer"))
 }
 
 func (h *OrderHandler) Create(c echo.Context) error {

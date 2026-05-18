@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -15,7 +16,7 @@ func NewReviewHandler(e *echo.Group, u domain.ReviewUsecase) {
 	handler := &ReviewHandler{usecase: u}
 
 	// Yorum Ekleme (Korumalı - Sadece müşteri rolü)
-	e.POST("/products/:id/reviews", handler.Create, AuthMiddleware(), RBACMiddleware("customer"))
+	e.POST("/products/:id/reviews", handler.Create, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("customer"))
 
 	// Ürün Yorumlarını Getirme (Açık - Public)
 	e.GET("/products/:id/reviews", handler.GetProductReviews)

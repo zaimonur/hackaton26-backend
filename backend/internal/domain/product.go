@@ -22,6 +22,7 @@ type Product struct {
 	AISummary        *string    `db:"ai_summary"`
 	AISentimentScore *string    `db:"ai_sentiment_score"`
 	AILastUpdatedAt  *time.Time `db:"ai_last_updated_at"`
+	Embedding        []float32  `db:"embedding"`
 	CreatedAt        time.Time  `db:"created_at"`
 	UpdatedAt        time.Time  `db:"updated_at"`
 }
@@ -101,7 +102,7 @@ type UpdateProductFullRequest struct {
 // --- Interfaces ---
 
 type ProductRepository interface {
-	Fetch(ctx context.Context, category string, searchQuery string) ([]Product, error)
+	Fetch(ctx context.Context, category string, searchQuery string, limit int, offset int) ([]Product, error)
 	FetchByStoreId(ctx context.Context, storeID string) ([]Product, error)
 	GetByID(ctx context.Context, id string) (*Product, error)
 	Store(ctx context.Context, p *Product) error
@@ -114,10 +115,11 @@ type ProductRepository interface {
 	GetAllForAI(ctx context.Context) ([]ProductLightweight, error)
 	GetByIDs(ctx context.Context, ids []string) ([]Product, error)
 	UpdateFull(ctx context.Context, p *Product) error
+	SearchBySimilarity(ctx context.Context, embedding []float32, limit int) ([]Product, error)
 }
 
 type ProductUsecase interface {
-	Fetch(ctx context.Context, category string, searchQuery string) ([]ProductResponse, error)
+	Fetch(ctx context.Context, category string, searchQuery string, page int, limit int) ([]ProductResponse, error)
 	FetchBySeller(ctx context.Context, sellerID string) ([]ProductResponse, error)
 	Store(ctx context.Context, sellerID string, req *CreateProductRequest) (*ProductResponse, error)
 	UpdatePriceAndStock(ctx context.Context, sellerID string, productID string, req *UpdateProductRequest) (*ProductResponse, error)

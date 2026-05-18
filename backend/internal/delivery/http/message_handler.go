@@ -3,6 +3,7 @@ package http
 import (
 	"drewisy/internal/domain"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 )
@@ -14,11 +15,11 @@ type MessageHandler struct {
 func NewMessageHandler(e *echo.Group, u domain.MessageUsecase) {
 	handler := &MessageHandler{usecase: u}
 
-	e.POST("/messages", handler.SendMessage, AuthMiddleware())
+	e.POST("/messages", handler.SendMessage, AuthMiddleware(os.Getenv("JWT_SECRET")))
 
 	// DİKKAT: Spesifik rotalar (statik olanlar), dinamik parametreli rotalardan (:target_id) önce tanımlanmalıdır!
-	e.GET("/messages/inbox", handler.GetInbox, AuthMiddleware())
-	e.GET("/messages/history/:target_id", handler.GetChatHistory, AuthMiddleware())
+	e.GET("/messages/inbox", handler.GetInbox, AuthMiddleware(os.Getenv("JWT_SECRET")))
+	e.GET("/messages/history/:target_id", handler.GetChatHistory, AuthMiddleware(os.Getenv("JWT_SECRET")))
 }
 
 func (h *MessageHandler) SendMessage(c echo.Context) error {

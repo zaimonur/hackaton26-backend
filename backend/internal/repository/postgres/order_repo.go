@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"drewisy/internal/domain"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -226,4 +227,68 @@ func (r *orderRepository) FetchByCustomerId(ctx context.Context, customerID stri
 	}
 
 	return result, nil
+}
+
+func (r *orderRepository) CreateOrderTx(ctx context.Context, order *domain.Order, items []domain.OrderItem) (err error) {
+	// 1. Transaction Başlat
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	// 2. Güvenlik Ağı (Panic veya Hata durumunda otomatik Rollback, Başarı durumunda Commit)
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p) // Panic'i yukarı fırlat ama db kitlenmesin
+		} else if err != nil {
+			tx.Rollback() // Herhangi bir adımda err dolarsa tüm işlemleri geri al
+		} else {
+			err = tx.Commit() // Her şey başarılıysa kalıcı olarak kaydet
+		}
+	}()
+
+	// 3. Siparişi Oluştur ve ID'sini al
+	orderQuery := `
+        INSERT INTO orders (customer_id, total_amount, status, created_at, updated_at) 
+        VALUES ($1, $2, $3, NOW(), NOW()) 
+        RETURNING id
+    `
+	err = tx.QueryRowxContext(ctx, orderQuery, order.CustomerID, order.TotalAmount, "pending").Scan(&order.ID)
+	if err != nil {
+		return errors.New("sipariş oluşturulamadı")
+	}
+
+	// 4. Sipariş Kalemlerini Ekle ve Stokları Düş (Döngü)
+	itemQuery := `
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, NOW(), NOW())
+    `
+	stockQuery := `
+        UPDATE products 
+        SET stock = stock - $1, updated_at = NOW() 
+        WHERE id = $2 AND stock >= $1
+    `
+
+	for _, item := range items {
+		// A) Önce stoğu düşmeye çalış (Eğer stok yetersizse hızlıca patlasın ve rollback olsun)
+		res, err := tx.ExecContext(ctx, stockQuery, item.Quantity, item.ProductID)
+		if err != nil {
+			return fmt.Errorf("ürün güncellenirken hata oluştu: %w", err)
+		}
+
+		rowsAffected, _ := res.RowsAffected()
+		if rowsAffected == 0 {
+			// Eğer 0 satır etkilendiyse, ya ürün silinmiştir ya da istenen miktar stoktan fazladır
+			return fmt.Errorf("ürün (ID: %s) için yetersiz stok veya ürün bulunamadı", item.ProductID)
+		}
+
+		// B) Stok başarıyla düşüldüyse sipariş kalemini order_items'a ekle
+		_, err = tx.ExecContext(ctx, itemQuery, order.ID, item.ProductID, item.Quantity, item.UnitPrice)
+		if err != nil {
+			return errors.New("sipariş kalemi eklenemedi")
+		}
+	}
+
+	return nil // Buraya gelindiyse defer bloğundaki tx.Commit() çalışacak
 }
