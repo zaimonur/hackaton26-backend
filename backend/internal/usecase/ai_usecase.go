@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -28,11 +26,6 @@ type CachedIntent struct {
 	InStockOnly bool      `json:"in_stock_only"`
 	Vector      []float32 `json:"vector"`
 }
-
-var (
-	priceRegex = regexp.MustCompile(`(?:max|en fazla|altı|<\s*)\s*(\d+)\s*(?:tl|lira)`)
-	stockRegex = regexp.MustCompile(`(?i)(stokta|mevcut)`)
-)
 
 func NewAIUsecase(aiService domain.AIService, productRepo domain.ProductRepository, reviewRepo domain.ReviewRepository, historyRepo domain.HistoryRepository, cacheRepo domain.CacheRepository) domain.AIUsecase {
 	return &aiUsecase{
@@ -76,16 +69,20 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 	cacheKey := "smartsearch:intent:" + req.Query
 	var intent CachedIntent
 
-	// 2. Cache Control (Önce Redis'e bak)
+	// 2. Cache Control (Önce Redis'e bak - 0.5ms hız)
 	err := u.cacheRepo.Get(ctx, cacheKey, &intent)
 	if err != nil {
-		// ---> CACHE MISS DURUMU <---
+		// ---> CACHE MISS DURUMU (Redis'te yok, LLM'e Sor) <---
+		log.Printf("NLP Cache Miss: LLM ile çözümleniyor -> %s", req.Query)
 
-		// ADIM 1: LLM'i çöpe attık. Niyeti Işık Hızında Regex ile Çıkarıyoruz (0.5 ms)
-		parsedIntent := extractIntentFast(req.Query)
+		// ADIM 1: Gemini ile Niyeti Çıkar (Structured JSON) - Eski Regex buradaydı, artık Gemini var!
+		parsedIntent, err := u.aiService.ParseSearchIntent(ctx, req.Query)
+		if err != nil {
+			// Fallback (AI çökerse aramayı iptal etme, düz kelimeyle ara)
+			parsedIntent = &domain.SearchIntent{SearchQuery: req.Query, MaxPrice: 0, InStockOnly: false}
+		}
 
-		// ADIM 2: Sadece temizlenmiş arama kelimelerini Vektöre (Embedding) çeviriyoruz
-		// (Örn: "100 tl altı kırmızı elbise" yerine sadece "kırmızı elbise" vektöre gider)
+		// ADIM 2: LLM'in ayıkladığı saf arama terimi üzerinden Vektör (Embedding) oluştur
 		vector, vecErr := u.aiService.CreateEmbedding(ctx, parsedIntent.SearchQuery)
 		if vecErr != nil {
 			return nil, errors.New("arama vektörü oluşturulamadı")
@@ -99,8 +96,8 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 			Vector:      vector,
 		}
 
-		// 24 saat TTL ile Redis'e kaydet ki bir daha sormasın
-		_ = u.cacheRepo.Set(ctx, cacheKey, intent, 24*time.Hour)
+		// 30 Gün TTL ile Redis'e kaydet ki bir daha sormasın (Token Maliyetinden Tasarruf!)
+		_ = u.cacheRepo.Set(ctx, cacheKey, intent, 30*24*time.Hour)
 	}
 
 	// 3. Hybrid Search (DB - Hem vektör hem fiyat/stok filtreleri birlikte çalışır)
@@ -148,29 +145,36 @@ func (u *aiUsecase) SummarizeProductReviews(ctx context.Context, productID strin
 }
 
 func (u *aiUsecase) GenerateDashboardSummary(ctx context.Context, salesData *domain.SalesDashboardResponse, lowStock []domain.Product, recentReviews []domain.ReviewResponse) (string, error) {
-	// Token optimizasyonu için gereksiz JSON datalarını kırpalım
-	salesJSON, _ := json.Marshal(salesData)
+	var sb strings.Builder
 
-	type miniStock struct {
-		Title string `json:"title"`
-		Stock int    `json:"stock"`
-	}
-	var minStockList []miniStock
-	for _, p := range lowStock {
-		minStockList = append(minStockList, miniStock{Title: p.Title, Stock: p.Stock})
-	}
-	stockJSON, _ := json.Marshal(minStockList)
+	// 1. Satış Verilerini Düzleştir (Flattening) - JSON kalabalığından kurtuluyoruz
+	sb.WriteString("SATIŞ VERİLERİ:\n")
+	sb.WriteString(fmt.Sprintf("- Toplam Ciro: %.2f TL\n", salesData.TotalRevenue))
+	sb.WriteString(fmt.Sprintf("- Başarılı Sipariş: %d\n", salesData.SuccessfulOrders))
+	sb.WriteString(fmt.Sprintf("- İptal Edilen Sipariş: %d\n", salesData.CancelledOrders))
+	sb.WriteString(fmt.Sprintf("- Ortalama Sepet Tutarı: %.2f TL\n", salesData.AverageOrderValue))
 
-	type miniReview struct {
-		Rating  int    `json:"rating"`
-		Comment string `json:"comment"`
+	// 2. Kritik Stokları Markdown Listesine Çevir
+	sb.WriteString("\nKRİTİK STOKLAR:\n")
+	if len(lowStock) == 0 {
+		sb.WriteString("- Kritik stokta ürün yok.\n")
+	} else {
+		for _, p := range lowStock {
+			sb.WriteString(fmt.Sprintf("- %s (Stok: %d)\n", p.Title, p.Stock))
+		}
 	}
-	var minReviewList []miniReview
-	for _, r := range recentReviews {
-		minReviewList = append(minReviewList, miniReview{Rating: r.Rating, Comment: r.Comment})
-	}
-	reviewsJSON, _ := json.Marshal(minReviewList)
 
+	// 3. Son Yorumları Düzleştir
+	sb.WriteString("\nSON YORUMLAR:\n")
+	if len(recentReviews) == 0 {
+		sb.WriteString("- Henüz yorum yok.\n")
+	} else {
+		for _, r := range recentReviews {
+			sb.WriteString(fmt.Sprintf("- %d Yıldız: %s\n", r.Rating, r.Comment))
+		}
+	}
+
+	// 4. Optimize Edilmiş Prompt
 	prompt := fmt.Sprintf(`Sen Drewisy e-ticaret platformunda uzman bir iş analistisin. Sana satıcının son 30 günlük satış verilerini, kritik stoklarını ve son müşteri yorumlarını veriyorum. Satıcıya doğrudan 'Sen' diye hitap ederek analiz yap. Çıktın KESİNLİKLE şu formatta bir Markdown olmalı:
 
 1. 💰 Finansal Durum: (Satışlara göre yorum)
@@ -180,9 +184,7 @@ func (u *aiUsecase) GenerateDashboardSummary(ctx context.Context, salesData *dom
 5. 📱 Sosyal Medya Gönderisi: (Satıcının ürünlerinden birini pazarlaması için kopyalayabileceği emojili ve hashtagli bir post metni).
 
 VERİLER:
-Satış Verisi: %s
-Kritik Stok: %s
-Son Yorumlar: %s`, string(salesJSON), string(stockJSON), string(reviewsJSON))
+%s`, sb.String())
 
 	summary, err := u.aiService.GenerateText(ctx, prompt)
 	if err != nil {
@@ -281,30 +283,4 @@ func (u *aiUsecase) asyncComputeAndCacheRecommendations(userID string) {
 
 	// 4. Sonucu Redis'e yaz (1 saat boyunca önbellekte kalacak)
 	u.cacheRepo.Set(ctx, "hero_recs:"+userID, finalResponse, 1*time.Hour)
-}
-
-func extractIntentFast(query string) CachedIntent {
-	intent := CachedIntent{
-		SearchQuery: query,
-		MaxPrice:    0,
-		InStockOnly: false,
-	}
-
-	// 1. Fiyat Yakalama (Örn: "100 tl altı elbise")
-	if matches := priceRegex.FindStringSubmatch(query); len(matches) > 1 {
-		if price, err := strconv.ParseFloat(matches[1], 64); err == nil {
-			intent.MaxPrice = price
-			// Fiyat kısmını arama metninden temizle ki vektör kafası karışmasın
-			intent.SearchQuery = priceRegex.ReplaceAllString(query, "")
-		}
-	}
-
-	// 2. Stok Yakalama
-	if stockRegex.MatchString(query) {
-		intent.InStockOnly = true
-		intent.SearchQuery = stockRegex.ReplaceAllString(intent.SearchQuery, "")
-	}
-
-	intent.SearchQuery = strings.TrimSpace(intent.SearchQuery)
-	return intent
 }

@@ -151,3 +151,61 @@ func (s *geminiService) CreateEmbedding(ctx context.Context, text string) ([]flo
 
 	return result.Embedding.Values, nil
 }
+
+func (s *geminiService) ParseSearchIntent(ctx context.Context, query string) (*domain.SearchIntent, error) {
+	// Arama kısmı olduğu için müşteriyi bekletmemek adına 15 saniye timeout koyuyoruz
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	client, err := genai.NewClient(ctxWithTimeout, option.WithAPIKey(s.apiKey))
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	model := client.GenerativeModel("gemini-1.5-flash")
+
+	// Structured Output (JSON Schema)
+	model.ResponseMIMEType = "application/json"
+	model.ResponseSchema = &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"search_query": {
+				Type:        genai.TypeString,
+				Description: "Sadece aranan temel nesne veya ürün. Örn: 'kırmızı elbise', 'spor ayakkabı'",
+			},
+			"max_price": {
+				Type:        genai.TypeNumber,
+				Description: "Maksimum fiyat bütçesi. Metinde belirtilmemişse 0 dön.",
+			},
+			"in_stock_only": {
+				Type:        genai.TypeBoolean,
+				Description: "Metinde 'stokta', 'mevcut', 'hemen al' gibi stok vurgusu varsa true, aksi halde false dön.",
+			},
+		},
+		Required: []string{"search_query", "max_price", "in_stock_only"},
+	}
+
+	prompt := fmt.Sprintf("Şu arama metninden kullanıcının niyetini çıkar: '%s'", query)
+	resp, err := model.GenerateContent(ctxWithTimeout, genai.Text(prompt))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return nil, errors.New("ai yanıt veremedi")
+	}
+
+	part := resp.Candidates[0].Content.Parts[0]
+	text, ok := part.(genai.Text)
+	if !ok {
+		return nil, errors.New("ai geçersiz format döndürdü")
+	}
+
+	var intent domain.SearchIntent
+	if err := json.Unmarshal([]byte(text), &intent); err != nil {
+		return nil, err
+	}
+
+	return &intent, nil
+}

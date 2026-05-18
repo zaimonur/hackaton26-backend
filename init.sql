@@ -124,6 +124,7 @@ CREATE INDEX idx_product_images_product_id ON product_images(product_id);
 CREATE INDEX idx_messages_sender_receiver ON messages(sender_id, receiver_id);
 CREATE INDEX idx_notifications_user_unread ON notifications(user_id) WHERE is_read = FALSE;
 CREATE INDEX idx_notifications_created_at ON notifications(created_at DESC);
+CREATE INDEX idx_products_ai_sync ON products(updated_at, ai_last_updated_at);
 
 --  Vektör Cosine Similarity aramalarını hızlandırmak için HNSW Indeksi
 CREATE INDEX products_embedding_idx ON products USING hnsw (embedding vector_cosine_ops);

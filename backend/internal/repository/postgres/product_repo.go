@@ -235,8 +235,14 @@ func (r *productRepository) GetByID(ctx context.Context, id string) (*domain.Pro
 }
 
 func (r *productRepository) UpdateAIInsights(ctx context.Context, productID string, summary string, badge string, embedding []float32) error {
-	// Hem AI özetini hem de embedding (vektör) kolonunu güncelliyoruz
-	query := `UPDATE products SET ai_summary = $1, ai_sentiment_score = $2, embedding = $3, updated_at = NOW() WHERE id = $4`
+	query := `
+		UPDATE products 
+		SET ai_summary = $1, 
+		    ai_sentiment_score = $2, 
+		    embedding = $3, 
+		    ai_last_updated_at = NOW() 
+		WHERE id = $4
+	`
 
 	_, err := r.db.ExecContext(ctx, query, summary, badge, pgvector.NewVector(embedding), productID)
 	return err
@@ -294,18 +300,24 @@ func (r *productRepository) GetCategories(ctx context.Context) ([]string, error)
 	return categories, nil
 }
 
-func (r *productRepository) GetAllForAI(ctx context.Context) ([]domain.ProductLightweight, error) {
-	query := `SELECT id, title, category, LEFT(description, 100) AS short_description FROM products`
-	var items []domain.ProductLightweight
-
-	if err := r.db.SelectContext(ctx, &items, query); err != nil {
+func (r *productRepository) GetPendingAIUpdates(ctx context.Context, limit int) ([]domain.Product, error) {
+	// ai_last_updated_at NULL ise (yeni ürün) veya güncellenme tarihi AI'ın son baktığı tarihten büyükse getir.
+	query := `
+		SELECT id, title, category, description, updated_at, ai_last_updated_at 
+		FROM products 
+		WHERE ai_last_updated_at IS NULL OR updated_at > ai_last_updated_at
+		ORDER BY updated_at ASC
+		LIMIT $1
+	`
+	var products []domain.Product
+	if err := r.db.SelectContext(ctx, &products, query, limit); err != nil {
 		return nil, err
 	}
 
-	if items == nil {
-		items = []domain.ProductLightweight{}
+	if products == nil {
+		products = []domain.Product{}
 	}
-	return items, nil
+	return products, nil
 }
 
 func (r *productRepository) GetByIDs(ctx context.Context, ids []string) ([]domain.Product, error) {

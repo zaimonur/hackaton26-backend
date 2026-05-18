@@ -111,7 +111,7 @@ type ProductRepository interface {
 	UpdateAIInsights(ctx context.Context, productID string, summary string, badge string, embedding []float32) error
 	GetBestsellers(ctx context.Context, limit int) ([]Product, error)
 	GetCategories(ctx context.Context) ([]string, error)
-	GetAllForAI(ctx context.Context) ([]ProductLightweight, error)
+	GetPendingAIUpdates(ctx context.Context, limit int) ([]Product, error)
 	GetByIDs(ctx context.Context, ids []string) ([]Product, error)
 	UpdateFull(ctx context.Context, p *Product) error
 	SearchBySimilarity(ctx context.Context, embedding []float32, limit int, maxPrice float64, inStock bool) ([]Product, error)
