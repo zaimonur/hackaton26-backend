@@ -67,7 +67,7 @@ func (s *LocalStorage) UploadImage(fileHeader *multipart.FileHeader, folder stri
 	return fmt.Sprintf("/static/%s/%s", folder, secureFileName), nil
 }
 
-// YENİ EKLENEN METOT: Interface zorunluluğu
+// Interface zorunluluğu
 func (s *LocalStorage) GeneratePresignedURL(ctx context.Context, folder string, filename string) (string, string, error) {
 	// Pre-signed URL mimarisi sadece S3, MinIO, GCS gibi bulut tabanlı depolamalarda çalışır.
 	// Geliştirme ortamında bu fonksiyona düşülürse developer'ı uyarıyoruz.

@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -97,7 +99,7 @@ Katalog: %s`, userQuery, catalogJSON)
 		return nil, errors.New("ai geçersiz bir format döndürdü")
 	}
 
-	// 🚨 KRİTİK YAMA: Gemini 2.5'in eklediği Markdown (```json) kalıntılarını temizle!
+	// Gemini 2.5'in eklediği Markdown (```json) kalıntılarını temizle!
 	rawString := string(text)
 	rawString = strings.ReplaceAll(rawString, "```json", "")
 	rawString = strings.ReplaceAll(rawString, "```", "")
@@ -111,8 +113,50 @@ Katalog: %s`, userQuery, catalogJSON)
 	return matchedIDs, nil
 }
 
+func (s *geminiService) GenerateTextStream(ctx context.Context, prompt string) (<-chan string, error) {
+	client, err := genai.NewClient(ctx, option.WithAPIKey(s.apiKey))
+	if err != nil {
+		return nil, fmt.Errorf("gemini client oluşturulamadı: %v", err)
+	}
+
+	model := client.GenerativeModel("gemini-2.5-flash")
+	iter := model.GenerateContentStream(ctx, genai.Text(prompt))
+
+	chunkChan := make(chan string)
+
+	go func() {
+		defer client.Close()
+		defer close(chunkChan) // Stream bittiğinde kanalı kapat
+
+		for {
+			select {
+			case <-ctx.Done():
+				return // Client bağlantıyı keserse veya timeout olursa çık
+			default:
+				resp, err := iter.Next()
+				if err == iterator.Done {
+					return
+				}
+				if err != nil {
+					log.Printf("Gemini Stream Hatası: %v", err)
+					return
+				}
+
+				if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+					part := resp.Candidates[0].Content.Parts[0]
+					if text, ok := part.(genai.Text); ok {
+						chunkChan <- string(text)
+					}
+				}
+			}
+		}
+	}()
+
+	return chunkChan, nil
+}
+
 func (s *geminiService) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	// YENİ: text-embedding-004 modeline tam uyumlu endpoint
+	// text-embedding-004 modeline tam uyumlu endpoint
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=%s", s.apiKey)
 
 	reqBody := map[string]interface{}{

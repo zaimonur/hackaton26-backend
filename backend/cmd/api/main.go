@@ -141,7 +141,6 @@ func main() {
 
 	// Routing
 	v1 := e.Group("/api/v1")
-	//  Saniyede 10 istek limiti (Burst: 30)
 	v1.Use(middleware.RateLimiter(middleware.NewRateLimiterMemoryStore(rate.Limit(10))))
 
 	handler.NewUserHandler(v1, userUsecase)
@@ -154,7 +153,7 @@ func main() {
 	handler.NewHistoryHandler(v1, historyUsecase)
 	handler.NewMessageHandler(v1, messageUsecase)
 	handler.NewNotificationHandler(v1, notificationUsecase)
-	handler.NewWSHandler(v1, hub)
+	handler.NewWSHandler(v1, hub, aiUsecase)
 
 	// Arka Plan İşçilerini (Workers) Başlat <---
 	log.Println("Arka plan işçileri ayağa kaldırılıyor...")

@@ -44,6 +44,7 @@ type AIService interface {
 	SmartSearch(ctx context.Context, catalogJSON string, userQuery string) ([]string, error)
 	CreateEmbedding(ctx context.Context, text string) ([]float32, error)
 	ParseSearchIntent(ctx context.Context, query string) (*SearchIntent, error)
+	GenerateTextStream(ctx context.Context, prompt string) (<-chan string, error)
 }
 
 // Usecase (İş Mantığı) Katmanı İçin Arayüz
@@ -53,4 +54,5 @@ type AIUsecase interface {
 	SummarizeProductReviews(ctx context.Context, productID string) (string, error)
 	GenerateDashboardSummary(ctx context.Context, salesData *SalesDashboardResponse, lowStock []Product, recentReviews []ReviewResponse) (string, error)
 	GetHeroRecommendations(ctx context.Context, userID string) (*HeroRecommendationResponse, error)
+	StreamShoppingAssistant(ctx context.Context, userID, message string) (<-chan string, error)
 }

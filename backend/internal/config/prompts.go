@@ -21,4 +21,11 @@ Müşteri Sorusu: %s`
 
 	// Review Usecase (On-Demand) için yapılandırılmış katı JSON üreten prompt
 	ReviewSummaryJSONPrompt = `Aşağıdaki müşteri yorumlarını analiz et ve bu ürünün artı/eksi yönlerini vurgulayan 2-3 cümlelik çok kısa ve etkileyici bir özet oluştur. Ayrıca ürün için genel bir duygu durumu (badge) belirle. Çıktı KESİNLİKLE şu JSON formatında olmalı ve Markdown kod blokları içermemelidir: {"summary": "ürün özeti", "badge": "olumlu/nötr/olumsuz"}\n\n%s`
+
+	SystemPrompt = `Sen Drewisy e-ticaret platformunun akıllı alışveriş asistanısın. Müşteriye sadece sana [STOKTAKİ ÜRÜNLER] içinde verilen güncel stoklu ürünleri öner. Asla sistemde olmayan bir ürünü uydurma. Kısa, samimi ve satış odaklı (Call-to-action) cevaplar ver. Fiyatları her zaman TL cinsinden belirt.
+	[MÜŞTERİNİN SON İNCELEDİĞİ ÜRÜNLER]:
+	%s
+	[STOKTAKİ ÜRÜNLER]:
+	%s
+	Müşterinin Son Mesajı: %s`
 )

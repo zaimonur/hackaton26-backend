@@ -94,7 +94,7 @@ func (s *S3Storage) UploadImage(fileHeader *multipart.FileHeader, folder string)
 	return fileURL, nil
 }
 
-// YENİ EKLENEN METOT: GeneratePresignedURL (Bant Genişliği Koruyucu)
+// GeneratePresignedURL (Bant Genişliği Koruyucu)
 func (s *S3Storage) GeneratePresignedURL(ctx context.Context, folder string, filename string) (string, string, error) {
 	// Çakışmayı önlemek için orijinal dosya adının sadece uzantısını alıp rastgele isim üretiyoruz
 	ext := filepath.Ext(filename)

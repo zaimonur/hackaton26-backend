@@ -1,6 +1,7 @@
 package http
 
 import (
+	"drewisy/internal/domain"
 	"drewisy/internal/infrastructure/websocket"
 	"errors"
 	"net/http"
@@ -20,17 +21,33 @@ var upgrader = gorillaws.Upgrader{
 }
 
 type WSHandler struct {
-	hub *websocket.Hub
+	hub       *websocket.Hub
+	aiUsecase domain.AIUsecase // DI ile eklendi
 }
 
-func NewWSHandler(e *echo.Group, hub *websocket.Hub) {
-	handler := &WSHandler{hub: hub}
-	// Endpoint artık query param bekliyor: /ws?token=<JWT>
+// Faz 1, 2 ve 3 için Event DTO'ları
+type WSMessagePayload struct {
+	Content string `json:"content"`
+}
+
+type WSStreamChunkPayload struct {
+	MessageID string `json:"message_id"`
+	Chunk     string `json:"chunk"`
+	IsFinal   bool   `json:"is_final"`
+}
+
+type WSEventOut struct {
+	Event   string      `json:"event"`
+	Payload interface{} `json:"payload"`
+}
+
+// NewWSHandler artık 3 parametre alıyor (main.go'daki çağrı ile eşleşti)
+func NewWSHandler(e *echo.Group, hub *websocket.Hub, aiUsecase domain.AIUsecase) {
+	handler := &WSHandler{hub: hub, aiUsecase: aiUsecase}
 	e.GET("/ws", handler.HandleWS)
 }
 
 func (h *WSHandler) HandleWS(c echo.Context) error {
-	// 1. PRE-UPGRADE AUTHENTICATION (Bağlantı yükseltilmeden önce kontrol)
 	tokenString := c.QueryParam("token")
 	if tokenString == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Token eksik"})
@@ -46,30 +63,27 @@ func (h *WSHandler) HandleWS(c echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Geçersiz kimlik bilgisi"})
 	}
 
-	// 2. KİMLİK DOĞRULANDI -> Bağlantıyı HTTP'den WebSocket'e güvenle yükselt
 	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
-		return err // Yükseltme hatası
+		return err
 	}
 
-	// 3. İstemciyi doğrudan Hub'a kaydet (Zaman aşımı / bekleme süresi riskleri yok edildi)
 	client := &websocket.Client{
-		Hub:    h.hub,
-		Conn:   conn,
-		Send:   make(chan []byte, 256),
-		UserID: userID,
+		Hub:       h.hub,
+		Conn:      conn,
+		Send:      make(chan []byte, 256),
+		UserID:    userID,
+		AIUsecase: h.aiUsecase, // Client'a AI yeteneğini doğrudan veriyoruz
 	}
 
 	client.Hub.Register(client)
 
-	// Dinleme ve yazma döngülerini asenkron başlat
 	go client.WritePump()
 	go client.ReadPump()
 
 	return nil
 }
 
-// WebSocket bağlantısı için JWT token doğrulama fonksiyonu
 func parseWSToken(tokenString string, secret string) (jwt.MapClaims, error) {
 	if secret == "" {
 		return nil, errors.New("sunucu yapılandırma hatası")
