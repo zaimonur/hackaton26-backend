@@ -2,10 +2,12 @@ package http
 
 import (
 	"drewisy/internal/domain"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -119,16 +121,20 @@ func (h *ProductHandler) FetchProducts(c echo.Context) error {
 }
 
 func (h *ProductHandler) Store(c echo.Context) error {
-	sellerID := c.Get("user_id").(string) // Auth middleware'den geldiğini varsayıyoruz
+	sellerID := c.Get("user_id").(string)
 
 	var req domain.CreateProductRequest
-	// c.Bind doğrudan JSON payload'ı okur
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "geçersiz JSON formatı"})
 	}
 
+	// 1. EKLENEN DEBUG SATIRI: İOS'tan tam olarak ne gelmiş görelim
+	fmt.Printf("📦 iOS'TAN GELEN PAYLOAD: %+v\n", req)
+
 	res, err := h.usecase.Store(c.Request().Context(), sellerID, &req)
 	if err != nil {
+		// 2. EKLENEN DEBUG SATIRI: Hatanın tam olarak neden patladığını görelim
+		fmt.Println("🚨 500 HATASININ NEDENİ:", err.Error())
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
@@ -233,8 +239,8 @@ func (h *ProductHandler) GeneratePresignedURLs(c echo.Context) error {
 	}
 
 	for i := 0; i < req.Count; i++ {
-		// Rastgele bir dosya adı üret
-		fileName := strconv.FormatInt(c.Request().Context().Value("request_time").(int64), 10) + "_" + strconv.Itoa(i) + ".jpg"
+		// Context yerine doğrudan anlık UnixNano zamanını kullanıyoruz
+		fileName := strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + strconv.Itoa(i) + ".jpg"
 
 		urls = append(urls, PreSignedURLResponse{
 			UploadURL: baseURL + "/api/v1/mock-s3/" + fileName,

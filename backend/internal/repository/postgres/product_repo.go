@@ -138,11 +138,21 @@ func (r *productRepository) Store(ctx context.Context, p *domain.Product) (err e
 	}()
 
 	query := `INSERT INTO products (store_id, title, description, price, stock, category, image_path, embedding, created_at, updated_at) 
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()) 
-			  RETURNING id, created_at, updated_at`
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()) 
+              RETURNING id, created_at, updated_at`
 
-	err = tx.QueryRowxContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, pgvector.NewVector(p.Embedding)).
+	// VEKTÖR KONTROLÜ
+	var embedVal interface{}
+	if len(p.Embedding) > 0 {
+		embedVal = pgvector.NewVector(p.Embedding)
+	} else {
+		embedVal = nil
+	}
+
+	err = tx.QueryRowxContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, embedVal).
 		Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+
+	// BİZİM BİR ÖNCEKİNDE UNUTTUĞUMUZ HATA KONTROLÜ BURASI!
 	if err != nil {
 		return errors.New("ürün kaydedilemedi")
 	}
@@ -370,7 +380,16 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 		SET title = $1, description = $2, price = $3, stock = $4, category = $5, image_path = $6, embedding = $7, updated_at = NOW()
 		WHERE id = $8 AND store_id = $9
 	`
-	result, err := tx.ExecContext(ctx, updateQuery, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, pgvector.NewVector(p.Embedding), p.ID, p.StoreID)
+
+	// VEKTÖR KONTROLÜ (Boş vektör gelirse veritabanı çökmesin diye)
+	var embedVal interface{}
+	if len(p.Embedding) > 0 {
+		embedVal = pgvector.NewVector(p.Embedding)
+	} else {
+		embedVal = nil // Vektör hesaplanamadıysa mevcudu bozma veya null geç
+	}
+
+	result, err := tx.ExecContext(ctx, updateQuery, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, embedVal, p.ID, p.StoreID)
 	if err != nil {
 		return errors.New("ürün bilgileri güncellenirken veritabanı hatası oluştu")
 	}

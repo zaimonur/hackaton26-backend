@@ -295,15 +295,13 @@ func (u *aiUsecase) asyncComputeAndCacheRecommendations(userID string) {
 }
 
 // StreamShoppingAssistant: Hafızalı ve Redis destekli akıllı alışveriş asistanı
-func (u *aiUsecase) StreamShoppingAssistant(ctx context.Context, userID, message string) (<-chan string, error) {
+func (u *aiUsecase) StreamShoppingAssistant(ctx context.Context, userID, message string) ([]domain.ProductResponse, <-chan string, error) {
 	redisKey := fmt.Sprintf("ai_chat_session:%s", userID)
 
 	// 1. Redis'ten Geçici Sohbet Geçmişini Çek (Sliding Window)
-	// Senin sistemindeki Get fonksiyonu: Get(ctx, key, &dest) şeklinde çalışıyor ve sadece error dönüyor.
 	var chatHistory []RedisChatMessage
 	err := u.cacheRepo.Get(ctx, redisKey, &chatHistory)
 	if err != nil {
-		// Eğer anahtar bulunamadıysa (nil/empty cache) hata loglayıp boş diziyle devam etsin diye:
 		chatHistory = []RedisChatMessage{}
 	}
 
@@ -316,7 +314,7 @@ func (u *aiUsecase) StreamShoppingAssistant(ctx context.Context, userID, message
 		historyText.WriteString(fmt.Sprintf("%s: %s\n", sender, msg.Content))
 	}
 
-	// 2. ER Diyagramı Uyumluluğu: historyRepo Kullanarak Son İncelenen 5 Ürünü Al (RAG Ürün Bağlamı)
+	// 2. ER Diyagramı Uyumluluğu: Son İncelenen 5 Ürünü Al (RAG Ürün Bağlamı)
 	recentProducts, _ := u.historyRepo.GetByUserID(ctx, userID, 5)
 	var reviewedProductsText strings.Builder
 	for _, p := range recentProducts {
@@ -326,25 +324,42 @@ func (u *aiUsecase) StreamShoppingAssistant(ctx context.Context, userID, message
 	// 3. Vektör Oluşturma ve pgvector Arama (RAG Stoklu Ürün Keşfi)
 	vector, err := u.aiService.CreateEmbedding(ctx, message)
 	if err != nil {
-		return nil, fmt.Errorf("embedding hatası: %v", err)
+		return nil, nil, fmt.Errorf("embedding hatası: %v", err)
 	}
 
 	// En fazla 4 adet ve Kesinlikle Stokta Olan (inStock = true) ürünler
 	similarProducts, err := u.productRepo.SearchBySimilarity(ctx, vector, 4, 0, true)
 	if err != nil {
-		return nil, fmt.Errorf("benzer ürün arama hatası: %v", err)
+		return nil, nil, fmt.Errorf("benzer ürün arama hatası: %v", err)
 	}
 
 	var contextProducts strings.Builder
+	var matchedProducts []domain.ProductResponse
+
 	if len(similarProducts) == 0 {
 		contextProducts.WriteString("Maalesef şu an stoklarımızda bu talebe uygun ürün bulunmuyor.")
 	} else {
 		for _, p := range similarProducts {
 			contextProducts.WriteString(fmt.Sprintf("- %s (%.2f TL) [Kategori: %s, Kalan Stok: %d]\n", p.Title, p.Price, p.Category, p.Stock))
+
+			// Frontend'e fırlatılacak kart verilerini hazırlıyoruz
+			matchedProducts = append(matchedProducts, domain.ProductResponse{
+				ID:          p.ID,
+				StoreID:     p.StoreID,
+				StoreName:   p.StoreName,
+				Title:       p.Title,
+				Description: p.Description,
+				Price:       p.Price,
+				Category:    p.Category,
+				ImagePath:   p.ImagePath,
+				SellerID:    p.SellerID,
+				Stock:       p.Stock,
+				Gallery:     []string{},
+			})
 		}
 	}
 
-	// 4. Katı System Prompt Yapılandırması (config.SystemPrompt kullanılıyor)
+	// 4. Katı System Prompt Yapılandırması
 	finalPrompt := fmt.Sprintf(config.SystemPrompt, reviewedProductsText.String(), contextProducts.String(), message)
 	if historyText.Len() > 0 {
 		finalPrompt = fmt.Sprintf("Sohbet Geçmişi:\n%s\n\n%s", historyText.String(), finalPrompt)
@@ -353,37 +368,35 @@ func (u *aiUsecase) StreamShoppingAssistant(ctx context.Context, userID, message
 	// 5. Gemini API Stream Akışını Başlatma
 	geminiStream, err := u.aiService.GenerateTextStream(ctx, finalPrompt)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	outChan := make(chan string)
 
 	// 6. Asenkron Tüketici Goroutine (Memory Leak ve Geçici Hafıza Yönetimi)
 	go func() {
-		defer close(outChan) // Kanalı kapatarak bellek sızıntısını (memory leak) engelle
+		defer close(outChan)
 
 		var fullAIResponse strings.Builder
 
-		// Kelimeleri akan kanaldan oku, UI'ya ilet ve tam metin olarak biriktir
 		for chunk := range geminiStream {
 			fullAIResponse.WriteString(chunk)
 			outChan <- chunk
 		}
 
-		// 7. Akış Bittiğinde Hafızayı Güncelle (Kullanıcı sorusu + AI cevabı Redis'e yazılıyor)
+		// 7. Akış Bittiğinde Hafızayı Güncelle
 		chatHistory = append(chatHistory, RedisChatMessage{Role: "user", Content: message})
 		chatHistory = append(chatHistory, RedisChatMessage{Role: "model", Content: fullAIResponse.String()})
 
-		// Sliding Window: Hafızanın sadece son 6 mesajı tutmasını sağlıyoruz (Token taşma koruması)
 		if len(chatHistory) > 6 {
 			chatHistory = chatHistory[len(chatHistory)-6:]
 		}
 
 		if historyBytes, err := json.Marshal(chatHistory); err == nil {
-			// Oturuma 1 saatlik ömür (TTL) veriyoruz, PostgreSQL şemamız ve Foreign Key kurallarımız tertemiz kalıyor!
 			_ = u.cacheRepo.Set(context.Background(), redisKey, string(historyBytes), 1*time.Hour)
 		}
 	}()
 
-	return outChan, nil
+	// Hem frontend için hazırladığımız JSON kart listesini hem de metin akış kanalını dönüyoruz
+	return matchedProducts, outChan, nil
 }

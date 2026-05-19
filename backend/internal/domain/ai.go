@@ -54,5 +54,5 @@ type AIUsecase interface {
 	SummarizeProductReviews(ctx context.Context, productID string) (string, error)
 	GenerateDashboardSummary(ctx context.Context, salesData *SalesDashboardResponse, lowStock []Product, recentReviews []ReviewResponse) (string, error)
 	GetHeroRecommendations(ctx context.Context, userID string) (*HeroRecommendationResponse, error)
-	StreamShoppingAssistant(ctx context.Context, userID, message string) (<-chan string, error)
+	StreamShoppingAssistant(ctx context.Context, userID, message string) ([]ProductResponse, <-chan string, error)
 }

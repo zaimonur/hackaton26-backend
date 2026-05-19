@@ -134,22 +134,32 @@ func (c *Client) handleAIChatMessage(payload []byte) {
 		return
 	}
 
-	// AI Usecase Katmanından Go Channel stream'ini alıyoruz
-	chunkChan, err := c.AIUsecase.StreamShoppingAssistant(ctx, c.UserID, msgPayload.Content)
+	products, chunkChan, err := c.AIUsecase.StreamShoppingAssistant(ctx, c.UserID, msgPayload.Content)
 	if err != nil {
 		log.Printf("[AI Usecase Error] Stream başlatılamadı: %v", err)
 		return
 	}
 
+	isFirstChunk := true
+
 	// Gelen kelimeleri parça parça iOS istemcisine fırlatıyoruz
 	for chunk := range chunkChan {
+		// Swift DTO'suna uyumlu olması için esnek map kullanıyoruz
+		chunkPayload := map[string]interface{}{
+			"message_id": msgID,
+			"chunk":      chunk,
+			"is_final":   false,
+		}
+
+		// iOS tarafı ürünleri stream'in içinde beklediği için sadece İLK pakete gömüyoruz!
+		if isFirstChunk && len(products) > 0 {
+			chunkPayload["recommended_products"] = products
+			isFirstChunk = false
+		}
+
 		outEvent := WSEventOut{
-			Event: "ai_stream_chunk",
-			Payload: WSStreamChunkPayload{
-				MessageID: msgID,
-				Chunk:     chunk,
-				IsFinal:   false,
-			},
+			Event:   "ai_stream_chunk",
+			Payload: chunkPayload,
 		}
 		outBytes, _ := json.Marshal(outEvent)
 		c.safeSend(outBytes)
@@ -158,10 +168,10 @@ func (c *Client) handleAIChatMessage(payload []byte) {
 	// Akış başarıyla sonlandığında final paketini gönderiyoruz
 	finalEvent := WSEventOut{
 		Event: "ai_stream_chunk",
-		Payload: WSStreamChunkPayload{
-			MessageID: msgID,
-			Chunk:     "",
-			IsFinal:   true,
+		Payload: map[string]interface{}{
+			"message_id": msgID,
+			"chunk":      "",
+			"is_final":   true,
 		},
 	}
 	finalBytes, _ := json.Marshal(finalEvent)
