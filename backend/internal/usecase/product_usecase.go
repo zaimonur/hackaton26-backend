@@ -302,6 +302,12 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 
 // Domain dosyasındaki ProductResponse struct'ı ile eşleştirildi
 func mapProductToResponse(p domain.Product) domain.ProductResponse {
+
+	gallery := p.Gallery
+	if gallery == nil {
+		gallery = []string{}
+	}
+
 	return domain.ProductResponse{
 		ID:          p.ID,
 		SellerID:    p.SellerID,
@@ -313,7 +319,7 @@ func mapProductToResponse(p domain.Product) domain.ProductResponse {
 		Stock:       p.Stock,
 		Category:    p.Category,
 		ImagePath:   p.ImagePath,
-		Gallery:     p.Gallery,
+		Gallery:     gallery,
 	}
 }
 

@@ -31,6 +31,7 @@ func (u *historyUsecase) GetHistory(ctx context.Context, userID string) ([]domai
 	for _, p := range products {
 		res = append(res, domain.ProductResponse{
 			ID:          p.ID,
+			SellerID:    p.SellerID,
 			StoreID:     p.StoreID,
 			StoreName:   p.StoreName,
 			Title:       p.Title,

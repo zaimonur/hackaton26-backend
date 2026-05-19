@@ -46,7 +46,6 @@ func (u *aiUsecase) GenerateDescription(ctx context.Context, req *domain.Generat
 		return nil, errors.New("ürün adı ve kategorisi zorunludur")
 	}
 
-	//Promptları merkezi Config üzerinden alıyoruz
 	prompt := fmt.Sprintf(config.GenerateDescriptionPrompt, req.Title, req.Category, req.Keywords)
 
 	response, err := u.aiService.GenerateText(ctx, prompt)
@@ -60,7 +59,6 @@ func (u *aiUsecase) GenerateDescription(ctx context.Context, req *domain.Generat
 }
 
 func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequest) (*domain.SmartSearchResponse, error) {
-	// 1. Input Sanitization
 	req.Query = strings.TrimSpace(strings.ToLower(req.Query))
 	if req.Query == "" {
 		return nil, errors.New("arama metni boş olamaz")
@@ -69,26 +67,22 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 	cacheKey := "smartsearch:intent:" + req.Query
 	var intent CachedIntent
 
-	// 2. Cache Control (Önce Redis'e bak - 0.5ms hız)
 	err := u.cacheRepo.Get(ctx, cacheKey, &intent)
 	if err != nil {
-		// ---> CACHE MISS DURUMU (Redis'te yok, LLM'e Sor) <---
 		log.Printf("NLP Cache Miss: LLM ile çözümleniyor -> %s", req.Query)
 
-		// ADIM 1: Gemini ile Niyeti Çıkar (Structured JSON) - Eski Regex buradaydı, artık Gemini var!
 		parsedIntent, err := u.aiService.ParseSearchIntent(ctx, req.Query)
-		if err != nil {
-			// Fallback (AI çökerse aramayı iptal etme, düz kelimeyle ara)
+		if err != nil || parsedIntent == nil || parsedIntent.SearchQuery == "" {
+			log.Printf("⚠️ NLP Fallback devreye girdi. Hata/Boş Sorgu: %v", err)
 			parsedIntent = &domain.SearchIntent{SearchQuery: req.Query, MaxPrice: 0, InStockOnly: false}
 		}
 
-		// ADIM 2: LLM'in ayıkladığı saf arama terimi üzerinden Vektör (Embedding) oluştur
 		vector, vecErr := u.aiService.CreateEmbedding(ctx, parsedIntent.SearchQuery)
 		if vecErr != nil {
-			return nil, errors.New("arama vektörü oluşturulamadı")
+			log.Printf("🚨 Vektör API Hatası: %v", vecErr)
+			return &domain.SmartSearchResponse{Products: []domain.ProductResponse{}}, nil
 		}
 
-		// Cache yapısını doldur
 		intent = CachedIntent{
 			SearchQuery: parsedIntent.SearchQuery,
 			MaxPrice:    parsedIntent.MaxPrice,
@@ -96,22 +90,28 @@ func (u *aiUsecase) SmartSearch(ctx context.Context, req *domain.SmartSearchRequ
 			Vector:      vector,
 		}
 
-		// 30 Gün TTL ile Redis'e kaydet ki bir daha sormasın (Token Maliyetinden Tasarruf!)
 		_ = u.cacheRepo.Set(ctx, cacheKey, intent, 30*24*time.Hour)
 	}
 
-	// 3. Hybrid Search (DB - Hem vektör hem fiyat/stok filtreleri birlikte çalışır)
 	similarProducts, err := u.productRepo.SearchBySimilarity(ctx, intent.Vector, 5, intent.MaxPrice, intent.InStockOnly)
 	if err != nil {
 		return nil, errors.New("ürün arama başarısız oldu")
 	}
 
-	// 4. API DTO Mapping
 	matchedProducts := make([]domain.ProductResponse, 0, len(similarProducts))
 	for _, p := range similarProducts {
 		matchedProducts = append(matchedProducts, domain.ProductResponse{
-			ID: p.ID, StoreID: p.StoreID, StoreName: p.StoreName, Title: p.Title,
-			Description: p.Description, Price: p.Price, Category: p.Category, ImagePath: p.ImagePath,
+			ID:          p.ID,
+			StoreID:     p.StoreID,
+			StoreName:   p.StoreName,
+			Title:       p.Title,
+			Description: p.Description,
+			Price:       p.Price,
+			Category:    p.Category,
+			ImagePath:   p.ImagePath,
+			SellerID:    p.SellerID,
+			Stock:       p.Stock,
+			Gallery:     []string{},
 		})
 	}
 
@@ -133,9 +133,7 @@ func (u *aiUsecase) SummarizeProductReviews(ctx context.Context, productID strin
 		fullText.WriteString(fmt.Sprintf("- %s\n", r.Comment))
 	}
 
-	// Gömülü string silindi, merkezi config bağlandı
 	prompt := fmt.Sprintf(config.ReviewSummaryPrompt, fullText.String())
-
 	summary, err := u.aiService.GenerateText(ctx, prompt)
 	if err != nil {
 		return "", fmt.Errorf("AI özet oluştururken hata: %v", err)
@@ -147,14 +145,12 @@ func (u *aiUsecase) SummarizeProductReviews(ctx context.Context, productID strin
 func (u *aiUsecase) GenerateDashboardSummary(ctx context.Context, salesData *domain.SalesDashboardResponse, lowStock []domain.Product, recentReviews []domain.ReviewResponse) (string, error) {
 	var sb strings.Builder
 
-	// 1. Satış Verilerini Düzleştir (Flattening) - JSON kalabalığından kurtuluyoruz
 	sb.WriteString("SATIŞ VERİLERİ:\n")
 	sb.WriteString(fmt.Sprintf("- Toplam Ciro: %.2f TL\n", salesData.TotalRevenue))
 	sb.WriteString(fmt.Sprintf("- Başarılı Sipariş: %d\n", salesData.SuccessfulOrders))
 	sb.WriteString(fmt.Sprintf("- İptal Edilen Sipariş: %d\n", salesData.CancelledOrders))
 	sb.WriteString(fmt.Sprintf("- Ortalama Sepet Tutarı: %.2f TL\n", salesData.AverageOrderValue))
 
-	// 2. Kritik Stokları Markdown Listesine Çevir
 	sb.WriteString("\nKRİTİK STOKLAR:\n")
 	if len(lowStock) == 0 {
 		sb.WriteString("- Kritik stokta ürün yok.\n")
@@ -164,7 +160,6 @@ func (u *aiUsecase) GenerateDashboardSummary(ctx context.Context, salesData *dom
 		}
 	}
 
-	// 3. Son Yorumları Düzleştir
 	sb.WriteString("\nSON YORUMLAR:\n")
 	if len(recentReviews) == 0 {
 		sb.WriteString("- Henüz yorum yok.\n")
@@ -174,7 +169,6 @@ func (u *aiUsecase) GenerateDashboardSummary(ctx context.Context, salesData *dom
 		}
 	}
 
-	// 4. Optimize Edilmiş Prompt
 	prompt := fmt.Sprintf(`Sen Drewisy e-ticaret platformunda uzman bir iş analistisin. Sana satıcının son 30 günlük satış verilerini, kritik stoklarını ve son müşteri yorumlarını veriyorum. Satıcıya doğrudan 'Sen' diye hitap ederek analiz yap. Çıktın KESİNLİKLE şu formatta bir Markdown olmalı:
 
 1. 💰 Finansal Durum: (Satışlara göre yorum)
@@ -198,24 +192,29 @@ func (u *aiUsecase) GetHeroRecommendations(ctx context.Context, userID string) (
 	cacheKey := "hero_recs:" + userID
 	var cachedResp domain.HeroRecommendationResponse
 
-	// 1. Önce Redis'e Bak (In-Memory Hız - <5ms)
 	err := u.cacheRepo.Get(ctx, cacheKey, &cachedResp)
 	if err == nil && len(cachedResp.RecommendedProducts) > 0 {
-		return &cachedResp, nil // Cache Hit! LLM'e gitmeye gerek yok.
+		return &cachedResp, nil
 	}
 
-	// 2. Cache Miss (Veri Yok) Durumu:
-	// Müşteriyi 5-10 saniye Gemini'ı beklemekle yormuyoruz.
-	// Arka planda gizlice bir goroutine tetikleyip hesaplamayı başlatıyoruz.
 	go u.asyncComputeAndCacheRecommendations(userID)
 
-	// 3. Fallback (Yedek Plan): Müşteriye anında "En Çok Satanlar"ı gösteriyoruz.
 	bestsellers, _ := u.productRepo.GetBestsellers(ctx, 6)
 	resProducts := make([]domain.ProductResponse, 0, len(bestsellers))
 	for _, p := range bestsellers {
 		resProducts = append(resProducts, domain.ProductResponse{
-			ID: p.ID, StoreID: p.StoreID, StoreName: p.StoreName, Title: p.Title,
-			Description: p.Description, Price: p.Price, Category: p.Category, ImagePath: p.ImagePath,
+			ID:          p.ID,
+			StoreID:     p.StoreID,
+			StoreName:   p.StoreName,
+			Title:       p.Title,
+			Description: p.Description,
+			Price:       p.Price,
+			Category:    p.Category,
+			ImagePath:   p.ImagePath,
+			// 🚀 EKSİKLER TAMAMLANDI
+			SellerID: p.SellerID,
+			Stock:    p.Stock,
+			Gallery:  []string{},
 		})
 	}
 
@@ -226,20 +225,18 @@ func (u *aiUsecase) GetHeroRecommendations(ctx context.Context, userID string) (
 }
 
 func (u *aiUsecase) asyncComputeAndCacheRecommendations(userID string) {
-
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("🚨 KRİTİK HATA (Panic) yakalandı [asyncComputeAndCacheRecommendations]: %v", r)
 		}
 	}()
 
-	// Arka plan işlemi olduğu için kendi timeout'unu oluşturur (API isteğinden bağımsız)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	history, err := u.historyRepo.GetByUserID(ctx, userID, 20)
 	if err != nil || len(history) == 0 {
-		return // Geçmiş yoksa öneri de hesaplayamayız
+		return
 	}
 
 	historyJSON, _ := json.Marshal(history)
@@ -255,7 +252,6 @@ func (u *aiUsecase) asyncComputeAndCacheRecommendations(userID string) {
 		return
 	}
 
-	// Not: Burada daha önce Faz 2'de güncellediğimiz hibrit yapıyı kullanıyoruz (maxPrice: 0, inStock: true)
 	recommendedProducts, err := u.productRepo.SearchBySimilarity(ctx, vector, 6, 0, true)
 	if err != nil || len(recommendedProducts) == 0 {
 		return
@@ -271,8 +267,17 @@ func (u *aiUsecase) asyncComputeAndCacheRecommendations(userID string) {
 	resProducts := make([]domain.ProductResponse, 0, len(recommendedProducts))
 	for _, p := range recommendedProducts {
 		resProducts = append(resProducts, domain.ProductResponse{
-			ID: p.ID, StoreID: p.StoreID, StoreName: p.StoreName, Title: p.Title,
-			Description: p.Description, Price: p.Price, Category: p.Category, ImagePath: p.ImagePath,
+			ID:          p.ID,
+			StoreID:     p.StoreID,
+			StoreName:   p.StoreName,
+			Title:       p.Title,
+			Description: p.Description,
+			Price:       p.Price,
+			Category:    p.Category,
+			ImagePath:   p.ImagePath,
+			SellerID:    p.SellerID,
+			Stock:       p.Stock,
+			Gallery:     []string{},
 		})
 	}
 
@@ -281,6 +286,5 @@ func (u *aiUsecase) asyncComputeAndCacheRecommendations(userID string) {
 		RecommendedProducts: resProducts,
 	}
 
-	// 4. Sonucu Redis'e yaz (1 saat boyunca önbellekte kalacak)
 	u.cacheRepo.Set(ctx, "hero_recs:"+userID, finalResponse, 1*time.Hour)
 }

@@ -401,7 +401,6 @@ func (r *productRepository) UpdateFull(ctx context.Context, p *domain.Product) (
 }
 
 func (r *productRepository) SearchBySimilarity(ctx context.Context, embedding []float32, limit int, maxPrice float64, inStock bool) ([]domain.Product, error) {
-	// Temel sorgumuz (1=1 hilesiyle dinamik WHERE eklemeyi kolaylaştırıyoruz)
 	query := `
 		SELECT p.id, p.store_id, s.seller_id, s.name AS store_name, p.title, p.description, p.price, p.stock, p.category, p.image_path, p.created_at, p.updated_at 
 		FROM products p 
@@ -412,7 +411,6 @@ func (r *productRepository) SearchBySimilarity(ctx context.Context, embedding []
 	var args []interface{}
 	argIdx := 1
 
-	// 1. HARD FILTERS (B-Tree İndexleri üzerinden veri kümesini daraltır)
 	if inStock {
 		query += ` AND p.stock > 0`
 	}
@@ -423,9 +421,13 @@ func (r *productRepository) SearchBySimilarity(ctx context.Context, embedding []
 		argIdx++
 	}
 
-	// 2. VECTOR SEARCH (Sadece filtreden geçenler üzerinde HNSW Cosine Similarity)
-	query += fmt.Sprintf(` ORDER BY p.embedding <=> $%d LIMIT $%d`, argIdx, argIdx+1)
-	args = append(args, pgvector.NewVector(embedding), limit)
+	query += fmt.Sprintf(` AND (p.embedding <=> $%d) < 0.55`, argIdx)
+	args = append(args, pgvector.NewVector(embedding))
+	argIdx++
+
+	// 2. VECTOR RANKING
+	query += fmt.Sprintf(` ORDER BY p.embedding <=> $%d LIMIT $%d`, argIdx-1, argIdx)
+	args = append(args, limit)
 
 	var products []domain.Product
 	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/generative-ai-go/genai"
@@ -69,7 +70,6 @@ func (s *geminiService) SmartSearch(ctx context.Context, catalogJSON string, use
 
 	model := client.GenerativeModel("gemini-2.5-flash")
 
-	// Structured Output Zorlaması (Strict JSON Array)
 	model.ResponseMIMEType = "application/json"
 	model.ResponseSchema = &genai.Schema{
 		Type: genai.TypeArray,
@@ -97,19 +97,26 @@ Katalog: %s`, userQuery, catalogJSON)
 		return nil, errors.New("ai geçersiz bir format döndürdü")
 	}
 
+	// 🚨 KRİTİK YAMA: Gemini 2.5'in eklediği Markdown (```json) kalıntılarını temizle!
+	rawString := string(text)
+	rawString = strings.ReplaceAll(rawString, "```json", "")
+	rawString = strings.ReplaceAll(rawString, "```", "")
+	rawString = strings.TrimSpace(rawString)
+
 	var matchedIDs []string
-	if err := json.Unmarshal([]byte(text), &matchedIDs); err != nil {
-		return nil, errors.New("ai yanıtı parse edilemedi")
+	if err := json.Unmarshal([]byte(rawString), &matchedIDs); err != nil {
+		return nil, fmt.Errorf("ai yanıtı parse edilemedi: %v", err)
 	}
 
 	return matchedIDs, nil
 }
 
 func (s *geminiService) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=%s", s.apiKey)
+	// YENİ: text-embedding-004 modeline tam uyumlu endpoint
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=%s", s.apiKey)
 
 	reqBody := map[string]interface{}{
-		"model": "models/text-embedding-004",
+		"model": "models/gemini-embedding-001",
 		"content": map[string]interface{}{
 			"parts": []map[string]string{
 				{"text": text},
@@ -136,7 +143,7 @@ func (s *geminiService) CreateEmbedding(ctx context.Context, text string) ([]flo
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gemini embedding api hatası: %d", resp.StatusCode)
+		return nil, fmt.Errorf("gemini embedding api hatası (HTTP %d)", resp.StatusCode)
 	}
 
 	var result struct {
@@ -163,7 +170,7 @@ func (s *geminiService) ParseSearchIntent(ctx context.Context, query string) (*d
 	}
 	defer client.Close()
 
-	model := client.GenerativeModel("gemini-1.5-flash")
+	model := client.GenerativeModel("gemini-2.5-flash")
 
 	// Structured Output (JSON Schema)
 	model.ResponseMIMEType = "application/json"
@@ -202,8 +209,13 @@ func (s *geminiService) ParseSearchIntent(ctx context.Context, query string) (*d
 		return nil, errors.New("ai geçersiz format döndürdü")
 	}
 
+	rawString := string(text)
+	rawString = strings.ReplaceAll(rawString, "```json", "")
+	rawString = strings.ReplaceAll(rawString, "```", "")
+	rawString = strings.TrimSpace(rawString)
+
 	var intent domain.SearchIntent
-	if err := json.Unmarshal([]byte(text), &intent); err != nil {
+	if err := json.Unmarshal([]byte(rawString), &intent); err != nil {
 		return nil, err
 	}
 
