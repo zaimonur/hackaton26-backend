@@ -216,10 +216,9 @@ func (u *aiUsecase) GetHeroRecommendations(ctx context.Context, userID string) (
 			Price:       p.Price,
 			Category:    p.Category,
 			ImagePath:   p.ImagePath,
-			// 🚀 EKSİKLER TAMAMLANDI
-			SellerID: p.SellerID,
-			Stock:    p.Stock,
-			Gallery:  []string{},
+			SellerID:    p.SellerID,
+			Stock:       p.Stock,
+			Gallery:     []string{},
 		})
 	}
 

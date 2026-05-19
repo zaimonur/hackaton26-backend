@@ -29,7 +29,7 @@ func NewProductHandler(e *echo.Group, u domain.ProductUsecase) {
 	handler := &ProductHandler{usecase: u}
 
 	// Mevcut Rotalar
-	e.GET("/products", handler.FetchProducts) //  1: Fetch yerine FetchProducts yapıldı
+	e.GET("/products", handler.FetchProducts)
 	e.GET("/seller/products", handler.FetchBySeller, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 	e.POST("/products", handler.Store, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
 	e.PATCH("/seller/products/:id", handler.UpdatePriceAndStock, AuthMiddleware(os.Getenv("JWT_SECRET")), RBACMiddleware("seller"))
@@ -116,7 +116,6 @@ func (h *ProductHandler) FetchProducts(c echo.Context) error {
 		return respondError(c, http.StatusInternalServerError, err.Error())
 	}
 
-	//  2: respondJSON yerine senin helper'ın olan respondSuccess kullanıldı.
 	return respondSuccess(c, http.StatusOK, products)
 }
 

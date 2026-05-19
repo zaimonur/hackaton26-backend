@@ -152,7 +152,6 @@ func (r *productRepository) Store(ctx context.Context, p *domain.Product) (err e
 	err = tx.QueryRowxContext(ctx, query, p.StoreID, p.Title, p.Description, p.Price, p.Stock, p.Category, p.ImagePath, embedVal).
 		Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 
-	// BİZİM BİR ÖNCEKİNDE UNUTTUĞUMUZ HATA KONTROLÜ BURASI!
 	if err != nil {
 		return errors.New("ürün kaydedilemedi")
 	}

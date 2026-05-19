@@ -161,7 +161,7 @@ func main() {
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 	defer cancelWorkers()
 
-	// BURADAKİ context.Background()'ları workerCtx ile değiştirdik!
+	// Arka Plan İşçilerini (Workers) Başlat
 	worker.StartAIBatchProcessor(context.Background(), aiUsecase, aiService, productRepo)
 	worker.StartOrderProcessor(workerCtx, cacheRepo, orderRepo)
 

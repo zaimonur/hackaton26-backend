@@ -10,7 +10,7 @@ import (
 )
 
 func StartOrderProcessor(ctx context.Context, cacheRepo domain.CacheRepository, orderRepo domain.OrderRepository) {
-	log.Println("🚀 Order Worker Başlatıldı. Güvenilir Kuyruk (Reliable Queue) dinleniyor...")
+	log.Println("Order Worker Başlatıldı. Güvenilir Kuyruk (Reliable Queue) dinleniyor...")
 
 	go func() {
 		for {

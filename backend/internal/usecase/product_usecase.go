@@ -73,7 +73,6 @@ func (u *productUsecase) Store(ctx context.Context, sellerID string, req *domain
 		return nil, errors.New("eksik veya hatalı ürün bilgisi")
 	}
 
-	// DEĞİŞEN KISIM: Upload döngüsü silindi, doğrudan frontend'den gelen URL'leri alıyoruz
 	if len(req.Images) == 0 {
 		return nil, errors.New("ürünün en az bir görseli bulunmak zorundadır")
 	}
@@ -260,7 +259,6 @@ func (u *productUsecase) UpdateFull(ctx context.Context, sellerID string, produc
 	}
 
 	// 2. Yeni yüklenen (ve bize URL olarak gelen) resimleri galeriye ekle
-	// (u.storage.UploadImage çağrısı tamamen kaldırıldı çünkü dosya zaten bulutta!)
 	if len(req.Images) > 0 {
 		gallery = append(gallery, req.Images...)
 	}
